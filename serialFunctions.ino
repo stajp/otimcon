@@ -53,6 +53,7 @@ void setTime(SerialCommand *cmd) {
 }
 
 void getTime() {
+  Serial.println();
   Serial.print(F("Time:"));
   DateTime t = rtc.now();
   
@@ -65,6 +66,7 @@ void getTime() {
 
 
 void getControl() {
+  Serial.println();
   Serial.print(F("Control:"));
   Serial.println(controlId);
   printCursor();
@@ -90,6 +92,7 @@ void setControl(SerialCommand *cmd) {
   }
   
   if (  controlSet  ) {
+    EEPROM.write(EEPROM_ADDRESS_CONTROL_ID, controlId);              // set ID of the control station. Any number between 1-250.      
     getControl();
   }
   else {
@@ -129,6 +132,8 @@ void setMode(SerialCommand *cmd) {
 
   // if the new mode is set, then return the mode, otherwise send to unrecognized command 
   if ( modeSet ) {
+    EEPROM.write(EEPROM_ADDRESS_MODE, controlFunction); // set function as control
+
     getMode();
   }
   else {
@@ -137,6 +142,7 @@ void setMode(SerialCommand *cmd) {
 }
 
 void getMode() {
+  Serial.println();
   Serial.print(F("Mode:"));
   switch (controlFunction) {
       case CONTROL:  Serial.println(F("CONTROL")); break;
@@ -168,14 +174,15 @@ void getVoltage() {
   // divide sum by 8 and then by VOLTAGE_REFERENCE (the difference 1024/500 or whatever was maximum voltage)
   // 8 is because of 8 samples
   // additional to get right voltage. A fast version would be to set Voltage_reference to 2 (it would be quicker although less accurate)
-  Serial.println((sum >> 3) / VOLTAGE_REFERENCE  ); 
+  Serial.println((int) (sum >> 3) / VOLTAGE_REFERENCE  ); 
   
   printCursor();
  
 }
 
 void getVersion() {
-  Serial.println(F("Get Version"));
+  Serial.println();
+  Serial.println(F("Version:"));
   Serial.println(F(SW_VERSION));
   printCursor();
 }
@@ -184,6 +191,7 @@ void getVersion() {
 void help(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
   if (arg == NULL) {
+    Serial.println();
     Serial.println(F("SET *: Options for setting data "));
     Serial.println(F("GET *: Options for getting data"));
     Serial.println();
@@ -195,14 +203,14 @@ void help(SerialCommand *cmd) {
       Serial.println();
       Serial.println(F("Set options"));
       Serial.println(F("TIME YYYYMMDDhhmmss : Set time in year[Y], month[M], day[D], hour[h], minute[m], second[s] format"));
-      Serial.println(F("CONTROL number      : Set control ID as number (1-250) [special code for START/FINISH"));
+      Serial.println(F("CTRL number         : Set control ID as number (1-250) [special code for START/FINISH"));
       Serial.println(F("MODE type           : Set modes"));
     }
     else if (strcmp(arg, "GET") == 0) {
       Serial.println();
       Serial.println(F("Get options"));
       Serial.println(F("TIME                : Get time in format YYYY/MM/DD hh:mm:ss - year[Y], month[M], day[D], hour[h], minute[m], second[s]"));
-      Serial.println(F("CONTROL             : Get control ID as number (1-250) [special code for START/FINISH]"));
+      Serial.println(F("CTRL                : Get control ID as number (1-250) [special code for START/FINISH]"));
       Serial.println(F("MODE                : Get mode status"));
       Serial.println(F("VERSION             : Get current firmware version"));
       Serial.println(F("VOLTAGE             : Get current battery voltage"));
@@ -214,6 +222,7 @@ void help(SerialCommand *cmd) {
 
 // This gets set as the default handler, and gets called when no other command matches.
 void unrecognized(SerialCommand *cmd) {
+  Serial.println();
   Serial.print(F("Unknown Argument '"));
   Serial.print(cmd->lastToken());
   Serial.println(F("'"));

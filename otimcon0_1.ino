@@ -1,9 +1,9 @@
-#define SW_VERSION "0.14NT"
+#define SW_VERSION "0.14"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
- *  Version: 0.14NT (Not Tested)
- *  Date: 20160816
+ *  Version: 0.14 
+ *  Date: 20160817
  *  Created by: Stipe Predanic (stipe.predanic (at) gmail.com)
  **************************************************************
  *
@@ -51,16 +51,18 @@
  *      - added support for readout and clear (NOT TESTED YET!)
  *   
  * - version 0.14 20160816
- *      - added support for serial CLI for setting and getting data (NOT TESTED YET!)
- *      - support for different modes and control ID's done through CLI (NOT TESTED YET!)
+ *      - added support for serial CLI for setting and getting data 
+ *      - support for different modes and control ID's done through CLI
  *      - changed name from OTICON to OTIMCON for search engines
  *      
+ * - version 0.15 20160817    
+ *      - CLI tested
+ *      - added the AD conversion for battery measurement (not tested)
+ *      - modes and control saved into ATMega328 EEPROM
  *
  * To do (either doesn't work or not even started) :
- * - test it 
  * - make a proper sleep
- * - work out the battery voltage measurement
- * - make backup to EEPROM
+ * - make backup of card UID and time to EEPROM on Ebay DS3231 boards 
 */
 
 
@@ -70,8 +72,8 @@
 #include <RTClib.h>       // include timer library 
 #include <SerialCommand.h>  // iclude serial command system
 
-// used for debugging purposes. Should be commented out in production
-#define DEBUG 
+// used for debugging purposes. Should be commented out in production or set to 0. Higher number, more information
+#define DEBUG 0
 
 
 // comment these if you don't have them, so the code will be smaller
@@ -121,13 +123,14 @@
 
 
 // define the function of the control
-#define CONTROL 1                // works as a standard control
+#define CONTROL 1                // works as a standard control with id
 #define CONTROL_WITH_READOUT 2   // works as a control which has a readout of all previouos controls
 #define READOUT 3                // works as a readout only
 #define CLEAR 4                  // works as a clear
 
 
-
+#define EEPROM_ADDRESS_MODE       10  // address in EEPROM for saving mode
+#define EEPROM_ADDRESS_CONTROL_ID 11  // address in EEPROM for saving control ID   
 
 
 static RTC_DS3231 rtc;
@@ -139,6 +142,7 @@ static byte readbackblock[18];                 //This array is used for reading 
 static long currentTime;                // currentTime, used for saving the time from RTC (without the need of continuos read in functions).
 
 boolean useSerial = true;
+boolean cardPresent = false;
 byte controlFunction;
 
 static SerialCommand  sCmd   = SerialCommand();       // The demo SerialCommand object
@@ -152,13 +156,20 @@ static CommandHandler sHand3 = CommandHandler(sCmd);  // the sub command handler
  * 
  */
 void setup() {
+      Serial.begin(9600);        // Initialize serial communications with the PC
+      SPI.begin();               // Init SPI bus
+
+      mfrc522.PCD_Init();        // Init MFRC522 card (in case you wonder what PCD means: proximity coupling device)
+     
+      Serial.println(F("Starting..."));     
       // if RTC cannot be started, then there is no RTC.
       if (! rtc.begin()) {
-        if (useSerial) Serial.println(F("No RTC"));
+        Serial.println(F("No RTC"));
         while (1);   // sketch halts in an endless loop
       }
 
       // if RTC is running, check the time. If the time differs more than 15 seconds off the computer clock, then it's set back to computer clock 
+      // warning: it will reset back to uploading time, if there is no backup battery on DS3231
       DateTime now = rtc.now();
       DateTime compiled = DateTime(F(__DATE__), F(__TIME__));
       
@@ -166,9 +177,8 @@ void setup() {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
       }
       
-        Serial.begin(9600);        // Initialize serial communications with the PC
-        controlId=62;              // set ID of the control station. Any number between 1-250.      
-        controlFunction = CONTROL; // set function as control
+        controlId = EEPROM.read(EEPROM_ADDRESS_CONTROL_ID);              // set ID of the control station. Any number between 1-250.      
+        controlFunction = EEPROM.read(EEPROM_ADDRESS_MODE); // set function as control
 
        // define pin modes for LED and PIEZO, if they are used
 #ifdef USE_LED
@@ -184,9 +194,7 @@ void setup() {
 #endif
 
 
-        SPI.begin();               // Init SPI bus
-
-        mfrc522.PCD_Init();        // Init MFRC522 card (in case you wonder what PCD means: proximity coupling device)
+      
         // Prepare the security key for the read and write functions - all six key bytes are set to 0xFF at chip delivery from the factory.
         // Since the cards in the kit are new and the keys were never defined, they are 0xFF
         // if we had a card that was programmed by someone else, we would need to know the key to be able to access it. This key would then need to be stored in 'key' instead.
@@ -228,8 +236,11 @@ void setup() {
   sHand3.addCommand("VERSION",  getVersion);   // Get current firmware version
   sHand3.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
   
-  
+#if DEBUG > 0
+  Serial.println("Setup finished!");
+#endif  
   Serial.print(">");
+  
 }
 
 
@@ -246,71 +257,104 @@ void loop()
 #else
     useSerial = (HIGH == digitalRead(SERIAL_ACTIVE_PIN)) ? true : false ;
 #endif
- 
 
+     // check serial, if there is something new on connected link
+     if (useSerial) {
+        sCmd.readSerial();     // We don't do much, just process serial commands
+     }
+      
         /*****************************************establishing contact with a tag/card**********************************************************************/
         
   	// Look for new cards (in case you wonder what PICC means: proximity integrated circuit card)
-	if ( ! mfrc522.PICC_IsNewCardPresent()) {//if PICC_IsNewCardPresent returns 1, a new card has been found and we continue
-		return;//if it did not find a new card is returns a '0' and we return to the start of the loop
+	if ( ! mfrc522.PICC_IsNewCardPresent()) {     //if PICC_IsNewCardPresent returns 1, a new card has been found and we continue
+    cardPresent = false;
+    return;                                     //if it did not find a new card is returns a '0' and we return to the start of the loop
 	}
 
 	// Select one of the cards
-	if ( ! mfrc522.PICC_ReadCardSerial()) {//if PICC_ReadCardSerial returns 1, the "uid" struct (see MFRC522.h lines 238-45)) contains the ID of the read card.
-		return;//if it returns a '0' something went wrong and we return to the start of the loop
+	if ( ! mfrc522.PICC_ReadCardSerial()) {       //if PICC_ReadCardSerial returns 1, the "uid" struct (see MFRC522.h lines 238-45)) contains the ID of the read card.
+		cardPresent = false;
+		return;                                     //if it returns a '0' something went wrong and we return to the start of the loop
 	}
-
-
+  
 // If the code comes to here, then a card is found and selected!
 
 
 // DEBUG CODE
-#ifdef DEBUG
+#if DEBUG > 0
          if (useSerial) Serial.println(F("card selected"));
 #endif
 // END DEBUG CODE
 
+   
+    // at the end of this code cardPresent is set to true. If there is no card on the reader, then it's set to false.
+    // 
+    // So, it will do something only if the card was removed and then new or the same card is presented again.
+    // It will bleep the same (or not to bleep if there is an error) until card is removed
+    if ( ! cardPresent) {       
       // controlId 1-252 are controls.
       // 1-250 regular controls, 251 is start, 252 is finish
       // work as control should be set up in controlSetup
       if ( controlFunction == CONTROL || controlFunction == CONTROL_WITH_READOUT ) {
           timeToBleep = writeControl();
           if ( timeToBleep && useSerial ) {
+                Serial.print(F("^"));
                 Serial.print(controlId);
                 Serial.print(F(","));
 
                 serialPrintUid();
                 
                 Serial.print(F(","));
-                Serial.println(currentTime);
+                Serial.print(currentTime);             // this will print just the UNIX timestamp format. This is _by design_!
+                Serial.println(F("$"));
+                
 
                 if (controlFunction == CONTROL_WITH_READOUT) {
                    readOutAllControls();
+                   Serial.println(F("%"));
                 }
+                Serial.println(F(">"));
             }
       }
       if ( controlFunction == READOUT ) {
         if (  useSerial ) {
-          Serial.print(F("Read card"));
+          Serial.print(F("Card:"));
           serialPrintUid();
           Serial.println("");
           timeToBleep = readOutAllControls();
+          Serial.println(F("%"));
+          Serial.println(F(">"));
+          
         }
       }
+
+      
       if ( controlFunction == CLEAR  ) {
-           timeToBleep = clearCard();          
+           timeToBleep = clearCard();
+           if ( useSerial && timeToBleep) {
+              Serial.print(F("Cleared card:"));
+              serialPrintUid();
+              Serial.println(F("$"));
+              Serial.println(F(">"));
+              
+                        
+           }
       }
 
+    }
+      
+      // for some reason, my hardware doesn't work without reinitialization.
+      // usually there should be some delay between new use (they say 100ms is enough), so do it prior to bleep which is at least 300ms
+      mfrc522.PCD_Init();     
+      
+      // if it's time to bleep, then bleep! :D
       if (timeToBleep) { 
             bleep();
            
       }
 
-     // check serial, if there is something new on connected link
-     if (useSerial) {
-        sCmd.readSerial();     // We don't do much, just process serial commands
-     }
-     
+     cardPresent = true;
+      
      sleep();
          
 /*  DEBUG DATA

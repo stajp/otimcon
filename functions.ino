@@ -15,7 +15,7 @@ byte readBlock(byte blockNumber, byte arrayAddress[])
   //MIFARE_Key *key is a pointer to the MIFARE_Key struct defined above, this struct needs to be defined for each block. New cards have all A/B= FF FF FF FF FF FF
   //Uid *uid is a pointer to the UID struct that contains the user ID of the card.
   if (status != MFRC522::STATUS_OK) {
-#ifdef DEBUG    
+#if DEBUG > 2   
          Serial.print(F("PCD_Authenticate() failed (read): "));
          Serial.println(mfrc522.GetStatusCodeName(status));
 #endif         
@@ -30,13 +30,13 @@ byte readBlock(byte blockNumber, byte arrayAddress[])
   byte buffersize = 18;//we need to define a variable with the read buffer size, since the MIFARE_Read method below needs a pointer to the variable that contains the size... 
   status = mfrc522.MIFARE_Read(blockNumber, arrayAddress, &buffersize);//&buffersize is a pointer to the buffersize variable; MIFARE_Read requires a pointer instead of just a number
   if (status != MFRC522::STATUS_OK) {
-#ifdef DEBUG 
+#if DEBUG > 3 
           Serial.print(F("MIFARE_read() failed: "));
           Serial.println(mfrc522.GetStatusCodeName(status));
 #endif         
           return 4;//return "4" as error message
   }
-#ifdef DEBUG 
+#if DEBUG > 3 
   Serial.println(F("block was read"));
 #endif
   return 1;
@@ -105,8 +105,8 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
   }
   // send data over serial only if serial is ON
     // DEBUG DATA FOR EASIER READING
-#ifdef DEBUG
-    Serial.println(F("Writing location, id, timestamp"));
+#if DEBUG > 1    
+      Serial.println(F("Writing location, id, timestamp"));
    // END DEBUG DATA
     Serial.print(location);
     Serial.print(F(","));
@@ -202,13 +202,13 @@ byte writeBlock(byte blockNumber, byte arrayAddress[])
   
   if (blockNumber > 2 && (blockNumber+1)%4 == 0) //block number is a trailer block (modulo 4); quit and send error code 2
     {
-#ifdef DEBUG      
+#if DEBUG > 4      
       Serial.print(blockNumber);
       Serial.println(F(" is a trailer block:"));
 #endif      
       return 2;
     }
-#ifdef DEBUG    
+#if DEBUG > 4    
   Serial.print(blockNumber);
   Serial.println(F(" is a data block:"));
 #endif
@@ -222,7 +222,7 @@ byte writeBlock(byte blockNumber, byte arrayAddress[])
   //MIFARE_Key *key is a pointer to the MIFARE_Key struct defined above, this struct needs to be defined for each block. New cards have all A/B= FF FF FF FF FF FF
   //Uid *uid is a pointer to the UID struct that contains the user ID of the card.
   if (status != MFRC522::STATUS_OK) {
-#ifdef DEBUG    
+#if DEBUG > 3    
          Serial.print(F("PCD_Authenticate() failed: "));
          Serial.println(mfrc522.GetStatusCodeName(status));
 #endif         
@@ -237,14 +237,14 @@ byte writeBlock(byte blockNumber, byte arrayAddress[])
   status = mfrc522.MIFARE_Write(blockNumber, arrayAddress, 16);//valueBlockA is the block number, MIFARE_Write(block number (0-15), byte array containing 16 values, number of bytes in block (=16))
   //status = mfrc522.MIFARE_Write(9, value1Block, 16);
   if (status != MFRC522::STATUS_OK) {
-#ifdef DEBUG  
+#if DEBUG > 3     
            Serial.print(F("MIFARE_Write() failed: "));
            Serial.println(mfrc522.GetStatusCodeName(status));
 #endif           
            return 4;//return "4" as error message
   }
 
-#ifdef DEBUG    
+#if DEBUG > 3   
   Serial.println(F("block was written"));
 #endif
   
@@ -277,19 +277,18 @@ void bleep() {
   
 }
 void sleep() {
-#ifdef DEBUG
+#if DEBUG > 3
   Serial.print(F("Sleeping"));
 #endif
-
   unsigned long previousMillis = millis();
-  while ( millis() - previousMillis < 100 );
+ // while ( millis() - previousMillis < 100 );
   
 }
 
 boolean writeControl() {
         byte location;                      // location on a card where the last data is written
         byte lastWrittenId;                 // last ID of the control writen on the card  
-        long lastTime;                      // time when the last control was written on a card
+        long int lastTime;                      // time when the last control was written on a card
         boolean writingDone;                       // the bolean used to check if writing to card is properly done
 
        
@@ -306,16 +305,29 @@ boolean writeControl() {
 
          location      = readbackblock[1];   // read location of the last written control
          lastWrittenId = readbackblock[5];   // check what was the last written control
-         lastTime      = readbackblock[6] | (readbackblock[7]<<8) | (readbackblock[8]<<16) | (readbackblock[9]<<24);  // check when was the last control written
+
+         lastTime      = (((long int)readbackblock[9]) << 24) | (((long int) readbackblock[8]) << 16) | (((long int)readbackblock[7]) << 8) | ((long int)readbackblock[6]);// check when was the last control written
 
        
          // get current time from the RTC
          currentTime=  rtc.now().unixtime(); 
 
+#if DEBUG > 1
+         Serial.println("Info block:");
+         Serial.print("Location:");
+         Serial.println(location);
+         Serial.print("Last Id:");
+         Serial.println(lastWrittenId);
+         Serial.print("Current time:");
+         Serial.println(currentTime);
+         Serial.print("Read time:");
+         Serial.println((long int) lastTime); 
+        
+#endif
          
          // check if it's the same control, and if the time between now and the last writing is less than xy seconds (defined in LAST_TIME_FROM_WRITING, by default 30 seconds)
          // if it is, then just bail out. Otherwise, try to write the data to the card.
-         if ( lastWrittenId == controlId  &&  currentTime - lastTime < LAST_TIME_FROM_WRITING) { 
+         if ( lastWrittenId == controlId  &&  currentTime - lastTime <= LAST_TIME_FROM_WRITING) { 
             return true; 
          }
 
@@ -532,7 +544,7 @@ void writeByte(int byteAddress, byte data) {
   int byteInBlock = byteAddress - (blockNumber << 4);  
 
 // DEBUG DATA
-#ifdef DEBUG  
+#if DEBUG > 4  
   Serial.print(F("BlockNumber:"));
   Serial.println(blockNumber);
   Serial.print(F("Byte inside:"));

@@ -1,6 +1,6 @@
 # OTIMCON
 
-__O__pen __TIM__ing __CON__trol is a hardware part of a sport timing 
+Open TIMing CONtrol is a hardware part of a sport timing 
 system. The system consists of controls (stations) which have RFID 
 readers/writers, while the competitors wear RFID chips.
 
