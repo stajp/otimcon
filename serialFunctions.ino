@@ -39,6 +39,9 @@ void serialPrintUid() {
  */
 void printCursor() {
    Serial.print(F(">"));
+
+    // reset the sleep counter
+    sleepCounter = 0;
 }
 
 /**
@@ -207,6 +210,10 @@ void getMode() {
  * 
  */
 void getVoltage() {
+ ADCSRA =  bit (ADEN); 
+ 
+  analogReference (ANALOG_REFERENCE);
+  
   Serial.println(F("Voltage:"));
   uint16_t sum;
   
@@ -343,6 +350,7 @@ void help(SerialCommand *cmd) {
       else unrecognized(cmd);
   }
   printCursor();
+  
 }
 
 /**
@@ -355,4 +363,5 @@ void unrecognized(SerialCommand *cmd) {
   Serial.print(F("Unknown Argument '"));
   Serial.print(cmd->lastToken());
   Serial.println(F("'"));
+  printCursor();
 }

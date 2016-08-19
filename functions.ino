@@ -198,7 +198,7 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
                           locationOnExternalEEPROM += 8;
 
                           // if the memory is full, start from the begining
-                          if (locationOnExternalEEPROM >= EXTERNAL_EEPROM_SIZE ) {
+                          if (locationOnExternalEEPROM >= (EXTERNAL_EEPROM_SIZE / 8) ) {
                              locationOnExternalEEPROM = 0;
                           } 
                           
@@ -316,17 +316,26 @@ void bleep() {
   
 }
 
+
+
+
 /**
  * function to sleep the system. It does .. nothing currently.
  * 
+
  * TODO: Do this!
  */
+
 void sleep() {
-#if DEBUG > 3
+#if DEBUG > 1  
   Serial.print(F("Sleeping"));
 #endif
-  unsigned long previousMillis = millis();
- // while ( millis() - previousMillis < 100 );
+
+  LowPower.powerDown(SLEEP_120MS, ADC_OFF, BOD_OFF);
+    
+
+ 
+  
   
 }
 

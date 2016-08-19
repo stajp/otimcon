@@ -1,4 +1,4 @@
-#define SW_VERSION "0.16"
+#define SW_VERSION "0.17"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
@@ -22,6 +22,8 @@
  *    + MFRC522 (download from http://makecourse.weebly.com/week10segment1.html , others may work)
  *    + RTCLib (any version https://github.com/adafruit/RTClib/network )
  *    + SerialCommand Library ( https://github.com/kiwisincebirth/Arduino-SerialCommand )
+ *    + LowPower Library (available in Arduino IDE)
+ *    + PinChangeInterrupt (available in Arduino IDE)
  *
  **************************************************************
  *
@@ -63,9 +65,18 @@
  * - version 0.16 201619     
  *      - make backup of card UID and time to EEPROM on Ebay DS3231 boards
  *
- *
- * To do (either doesn't work or not even started) :
- * - make a proper sleep
+ * - version 0.17 201619     
+ *      - sleep for low power work -> done it poorly, should revisit one day
+ *         -> done only for microcontroller, RFID and RTC should also go to sleep
+ *         -> low power now puts the microcontroller to sleep for 125ms, wakes up, checks the RFID and goes back to sleep.
+ *            after reading a card the system doesn't go to any kind of sleep for half a minute(!!!) and serial works as expected (also the reading of the cards is quicker!)
+ *            --> if serial is used, that resets the counter for another minute. 
+ *         -> if low power is not used (comment out a define), then serial always works as expected.
+ *         -> by default LOW POWER is NOT USED!
+ *         
+ *         
+ *            
+ *      
  *  
 */
 
@@ -76,6 +87,9 @@
 #include <RTClib.h>       // include timer library 
 #include <SerialCommand.h>  // iclude serial command system
 #include <EEPROM.h>
+#include "LowPower.h"
+
+
 
 // used for debugging purposes. Should be commented out in production or set to 0. Higher number, more information
 #define DEBUG 0
@@ -88,7 +102,10 @@
 #define USE_PIEZO
 
 // comment this if you want to use serial only if neccessary. If this is uncommented it will always use serial port, even if nothing is connected.
-#define USE_SERIAL_ALWAYS                       
+#define USE_SERIAL_ALWAYS  
+                     
+// comment this if you don't need low power work (the system won't go to sleep but serial will always work)
+//#define LOW_POWER  
 
 
 
@@ -109,6 +126,7 @@
 #define LAST_TIME_FROM_WRITING 30             // number of seconds between two consecutive writes if the same card user comes to the station (from now on called control)
 
 
+#define ANALOG_REFERENCE  EXTERNAL
 //#define VOLTAGE_REFERENCE 2                   // used for measuring the voltage, easier to code if 5V is used (error is 2.4%). It will output 512 for 5V.
 #define VOLTAGE_REFERENCE 1024. / 500       // used for measuring the voltage, voltage will be as fixed point arithmetic (100 = 1V)  500 = 5V
 
@@ -118,9 +136,12 @@
 
 
 // using internal refence for ADC is suggested but it needs to be done right. So by default this is not done!
+//#define ANALOG_REFERENCE  INTERNAL
 //#define VOLTAGE_REFERENCE 9                 // used for measuring the voltage, easier to code if 1.1V internal reference is used (error is around 3.4%)
 //#define VOLTAGE_REFERENCE 1024. / 110       // used for measuring the voltage, voltage will be as fixed point arithmetic (100 = 1V)  330 = 1.1V
 
+
+#define SERIAL_BAUD 19200
 
 // define ID's for START and FINISH controls. as 1-250 are for controls, available numbers are 253-255 and 0
 #define START_CONTROL_ID 251
@@ -161,6 +182,7 @@ byte controlFunction;
 static short int locationOnExternalEEPROM = 0;
 #endif
 
+static unsigned short sleepCounter;
 
 static SerialCommand  sCmd   = SerialCommand();       // The demo SerialCommand object
 static CommandHandler sHand1 = CommandHandler(sCmd);  // the main command handler
@@ -173,7 +195,7 @@ static CommandHandler sHand3 = CommandHandler(sCmd);  // the sub command handler
  * 
  */
 void setup() {
-      Serial.begin(9600);        // Initialize serial communications with the PC
+      Serial.begin(SERIAL_BAUD);        // Initialize serial communications with the PC
       SPI.begin();               // Init SPI bus
 
       mfrc522.PCD_Init();        // Init MFRC522 card (in case you wonder what PCD means: proximity coupling device)
@@ -261,12 +283,17 @@ void setup() {
   sHand3.addCommand("VERSION",  getVersion);   // Get current firmware version
   sHand3.addCommand("BACKUP",  getBackup);     // Get current memory backup in external EEPROM
   sHand3.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
-  
+
+
+
+
+
 #if DEBUG > 0
   Serial.println("Setup finished!");
 #endif  
   Serial.print(">");
-  
+
+  sleepCounter = 0;
 }
 
 
@@ -275,6 +302,10 @@ void loop()
  
         static boolean timeToBleep;                // the boolean which starts the bleeping (LED & PIEZO activation)
         
+
+      
+        
+               
 /*** 
  *  check serial state - check the #define, by default is on pin D6
  */
@@ -283,12 +314,29 @@ void loop()
 #else
     useSerial = (HIGH == digitalRead(SERIAL_ACTIVE_PIN)) ? true : false ;
 #endif
-
-     // check serial, if there is something new on connected link
-     if (useSerial) {
-        sCmd.readSerial();     // We don't do much, just process serial commands
-     }
+     
+     
       
+     // serial will work for about a minute after the card is read, but other times the system is just sleep <-> RFID
+     if (sleepCounter > 0x03FF) {
+        Serial.flush();
+        sleep();
+     } 
+     else {
+          // check serial, if there is something new on connected link
+        if (useSerial) {
+            sCmd.readSerial();     // We don't do much, just process serial commands
+          }
+        sleepCounter++;
+     }
+
+// if LOW_POWER is commented out, then it it will never go to sleep and Serial will be more responsive.     
+#ifndef LOW_POWER
+      Serial.flush();
+      sleepCounter = 0;
+#endif     
+     
+   
         /*****************************************establishing contact with a tag/card**********************************************************************/
         
   	// Look for new cards (in case you wonder what PICC means: proximity integrated circuit card)
@@ -380,8 +428,8 @@ void loop()
       }
 
      cardPresent = true;
-      
-     sleep();
+     sleepCounter = 0x1FF;
+     
          
 /*  DEBUG DATA
         for (int block=0; block<60; block++) { 

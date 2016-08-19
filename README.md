@@ -14,7 +14,7 @@ OTIMCON hardware consists of:
 
 It is loosely based on popular orienteering systems, and it's best used for orienteering, trekking, and other sports in which timing on several controls are needed.
 
-This is done as the price of RFID modules went down, good RTC is easy to find, and microcontroller is just a glue. It's open so other makers can upgrade the system, or add additional modules like communication over WiFi / Bluetooth, a small screen with information etc.
+This is done as the price of RFID modules went down, good RTC is easy to find, and microcontroller is just a glue. It's open so other makers can upgrade the system, or add additional modules like communication over WiFi / Bluetooth, a small screen with information, build a permanent course where the board is powered over solar cells etc.
 
 
 ### Usage of the system
@@ -50,7 +50,7 @@ _Note_ : use Arduino serial monitor for communication or a system that sends _ne
 	* CONTROL is a normal station which saves data to RFID card, and sends (via serial) the UID of the card, timestamp in UNIX epoch format and a readable time.
 	* CONTROL_WITH_READOUT does the same as control, but additionaly reads every previous control off the card. This is usable if some of the controls in the middle of the race are connected over Internet. Also it's usable to have one control for FINAL + automatic readout
 	* READOUT reads every written control on the RFID card, and sends it via serial.
-	*CLEAR completely erases all the data on the RFID card.
+	* CLEAR completely erases all the data on the RFID card.
 
 
 * How many controls can one RFID card accommodate?
@@ -58,7 +58,6 @@ _Note_ : use Arduino serial monitor for communication or a system that sends _ne
 	* Long answer: The system is prepared for MiFare 1K cards, which have 64 blocks (divided in 16 sectors) of 16 bytes. Each sector has 3 usable blocks, and one trailer block which has special meaning. First sector (blocks 0 - 3)is also off the limits. Second sector is prepared for info block (block 4) while blocks 5 and 6 are left free for anything (eg. competitor names). Data starts at block 8. Out of 56 blocks, there are 14 trailer blocks which are unusable, so control data can come to 42 blocks. Data about the control is saved in 5 bytes: 1 byte is control ID (number between 0-255), and 4 bytes is UNIX timestamp of the coming to control. So there are 3 controls per block - in total 42 x 3 = 126. There is a hard limit in code to 125. 
 	* For an visual answer look at the [CardAllocation](https://github.com/stajp/otimcon/blob/master/CardAllocationOTIMCON.ods)
 	
-
 
 * Is data safe on RFID card?
 	* Data retention of the RFID memory is 10 years, or 200000 writes. So it's OK for a normal use. Additionaly, every block on the card has an additional CRC8 check on the end, so the data is written as it should.
@@ -75,3 +74,6 @@ _Note_ : use Arduino serial monitor for communication or a system that sends _ne
 * What is info block in the RFID card?
 	* Info block is block 4, where the last location is saved, last control and time of the last control.
 
+* It looks like the serial port isn't working?
+	* Make sure you're using a serial terminal which sends \n newline (most of the terminal software doesn't). Serial monitor in Arduino IDE works nicely. 
+	* Also make sure you're not using LOW POWER mode - in that case use an RFID card on the station prior to serial communication. 
