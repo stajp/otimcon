@@ -1,4 +1,4 @@
-#define SW_VERSION "0.14"
+#define SW_VERSION "0.16"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
@@ -59,10 +59,14 @@
  *      - CLI tested
  *      - added the AD conversion for battery measurement (not tested)
  *      - modes and control saved into ATMega328 EEPROM
+ * 
+ * - version 0.16 201619     
+ *      - make backup of card UID and time to EEPROM on Ebay DS3231 boards
+ *
  *
  * To do (either doesn't work or not even started) :
  * - make a proper sleep
- * - make backup of card UID and time to EEPROM on Ebay DS3231 boards 
+ *  
 */
 
 
@@ -71,6 +75,7 @@
 #include <Wire.h>
 #include <RTClib.h>       // include timer library 
 #include <SerialCommand.h>  // iclude serial command system
+#include <EEPROM.h>
 
 // used for debugging purposes. Should be commented out in production or set to 0. Higher number, more information
 #define DEBUG 0
@@ -133,6 +138,11 @@
 #define EEPROM_ADDRESS_CONTROL_ID 11  // address in EEPROM for saving control ID   
 
 
+// change this from time to time for wear leveling, as write is done after _every card_
+#define EEPROM_ADDRESS_24C32_LOCATION 16  // location of high part of address in external EEPROM for saving backup of used cards   
+
+#define EXTERNAL_EEPROM_SIZE       4096  // maximum number of bytes in external EEPROM 
+
 static RTC_DS3231 rtc;
 static MFRC522 mfrc522(SS_PIN, RST_PIN);        // instatiate a MFRC522 reader object.
 static MFRC522::MIFARE_Key key;                 //create a MIFARE_Key struct named 'key', which will hold the card information
@@ -141,9 +151,16 @@ static byte controlId;                         // current ID of this station (fr
 static byte readbackblock[18];                 //This array is used for reading out a block. The MIFARE_Read method requires a buffer that is at least 18 bytes to hold the 16 bytes of a block.
 static long currentTime;                // currentTime, used for saving the time from RTC (without the need of continuos read in functions).
 
+
 boolean useSerial = true;
 boolean cardPresent = false;
+
 byte controlFunction;
+
+#ifdef USE_EEPROM_BACKUP
+static short int locationOnExternalEEPROM = 0;
+#endif
+
 
 static SerialCommand  sCmd   = SerialCommand();       // The demo SerialCommand object
 static CommandHandler sHand1 = CommandHandler(sCmd);  // the main command handler
@@ -176,10 +193,17 @@ void setup() {
       if (abs(now.unixtime() - compiled.unixtime()) > 15 ) {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
       }
-      
-        controlId = EEPROM.read(EEPROM_ADDRESS_CONTROL_ID);              // set ID of the control station. Any number between 1-250.      
-        controlFunction = EEPROM.read(EEPROM_ADDRESS_MODE); // set function as control
 
+        
+        controlId = EEPROM.read(EEPROM_ADDRESS_CONTROL_ID);              // set ID of the control station. Any number between 1-250. Beware: it can be anything if new Arduino is used.
+         
+        controlFunction = EEPROM.read(EEPROM_ADDRESS_MODE);              // set function (mode) of control. Beware: it can be anything if new Arduino is used. 
+        if (controlFunction > CLEAR || controlFunction == 0) controlFunction = READOUT;  // if controlFunction is something crazy (eg. new Arduino), set it to READOUT.
+
+#ifdef USE_EEPROM_BACKUP        
+       EEPROM.get(EEPROM_ADDRESS_24C32_LOCATION, locationOnExternalEEPROM);
+#endif
+       
        // define pin modes for LED and PIEZO, if they are used
 #ifdef USE_LED
        pinMode(FEEDBACK_LED, OUTPUT);
@@ -213,7 +237,7 @@ void setup() {
 /*
 ****** */
 
-         // set the main handler for serial command
+  // set the main handler for serial command
   sCmd.setHandler(sHand1);
 
   // Setup callbacks for the main SerialCommand. These are the main commands
@@ -227,6 +251,7 @@ void setup() {
   sHand2.addCommand("TIME",  setTime);         // Set time
   sHand2.addCommand("CTRL",  setControl);      // Set control number
   sHand2.addCommand("MODE",  setMode);         // Set mode
+  sHand2.addCommand("RESET_BACKUP",   setResetBackup); // reset backup memory pointer to 0
   sHand2.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
   
   sHand3.addCommand("TIME",  getTime);         // Get current time
@@ -234,6 +259,7 @@ void setup() {
   sHand3.addCommand("MODE",  getMode);         // Get current mode
   sHand3.addCommand("VOLTAGE",  getVoltage);   // Get battery voltage
   sHand3.addCommand("VERSION",  getVersion);   // Get current firmware version
+  sHand3.addCommand("BACKUP",  getBackup);     // Get current memory backup in external EEPROM
   sHand3.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
   
 #if DEBUG > 0

@@ -1,6 +1,18 @@
+/**
+ * 
+ * function which reads a block out of RFID card
+ * 
+ * Note: this readblock works only if number of blocks is under 256
+ *
+ * @param blockNumber  number of the wanted block
+ * @param arrayAddress  end array in which the data from the block will be saved (length at least 16 bytes)
+ * 
+ * @return information about errors or success  
+ *          1  success
+ *          3  card authentication failed (trailer block keys are wrong)
+ *          4  write failed 
+ */
 
-
-// this readblock works only if number of blocks is under 256
 byte readBlock(byte blockNumber, byte arrayAddress[]) 
 {
   int largestModulo4Number=blockNumber/4*4;
@@ -127,6 +139,8 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
 
    // write data for the location: first byte = id of the control; next 4 bytes = timestamp
    readbackblock[locationInBlock] = id;
+
+   // this should be done with memcpy .. but I like it this way
    readbackblock[locationInBlock+1] = timestampArray[0];
    readbackblock[locationInBlock+2] = timestampArray[1];
    readbackblock[locationInBlock+3] = timestampArray[2];
@@ -142,12 +156,16 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
      readBlock(4, readbackblock);               //read the block back
      readbackblock[1] = location;               // set the location of the last written control
      readbackblock[5] = id;                     // set the ID of the last written control
+
+     // this should be done with memcpy .. but I like it this way
      readbackblock[6] = timestampArray[0];       // set the timestamp of the last written control
      readbackblock[7] = timestampArray[1];
      readbackblock[8] = timestampArray[2];
      readbackblock[9] = timestampArray[3]; 
+     
      readbackblock[15] = CRC8(readbackblock,15);  // set the CRC
-     writingInfo = writeBlock(4,readbackblock);               // write it to infoBlock (block 4)
+     
+     writingInfo = writeBlock(4,readbackblock);   // write it to infoBlock (block 4)
      
      if (writingInfo == 1) {                      // if written propely (1 means success, 2-4 are errors), try to readout and check for success
         readBlock(blockNumber, readbackblock);      //read the whole location block back and check it!
@@ -166,6 +184,25 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
                       readbackblock[8] == timestampArray[2] && 
                       readbackblock[9] == timestampArray[3] &&  
                       readbackblock[15] == CRC8(readbackblock,15)) {
+                          
+                          // So, everything is OK!
+                          
+                          // to reduce the EEPROM write delay, buffer the data
+                          byte prepareForEEPROM[8];
+                          memcpy( prepareForEEPROM, timestampArray, 4 );
+                          memcpy( prepareForEEPROM+4, mfrc522.uid.uidByte, 4 );
+
+                          // write to external EEPROM, move address by 8, save new address on ATmega328 EEPROM 
+                          i2c_eeprom_write_bytes(EEEPROM_I2C_ADDRESS, locationOnExternalEEPROM, prepareForEEPROM, (byte) 8);
+
+                          locationOnExternalEEPROM += 8;
+
+                          // if the memory is full, start from the begining
+                          if (locationOnExternalEEPROM >= EXTERNAL_EEPROM_SIZE ) {
+                             locationOnExternalEEPROM = 0;
+                          } 
+                          
+                          EEPROM.update( EEPROM_ADDRESS_24C32_LOCATION,(short int) locationOnExternalEEPROM);
                         
                           return true;                 // return 1 as writing was successfull!
                           
@@ -252,8 +289,10 @@ byte writeBlock(byte blockNumber, byte arrayAddress[])
 
 }
 
-
-// USE_PIEZO    USE_LED
+/**
+ * function for feedback. It uses piezo and LED to give feedback to users.
+ * 
+ */
 void bleep() {
   
   // do this 3 times: turn on LED, make a 2.5kHz tone for 50ms, turn off LED, make a 3.5kHz tone for 50ms
@@ -276,6 +315,12 @@ void bleep() {
   }
   
 }
+
+/**
+ * function to sleep the system. It does .. nothing currently.
+ * 
+ * TODO: Do this!
+ */
 void sleep() {
 #if DEBUG > 3
   Serial.print(F("Sleeping"));
@@ -285,6 +330,11 @@ void sleep() {
   
 }
 
+/**
+ * writes control data to the RFID card
+ * 
+ * @return boolean  - true if it's written to the card, false if not.
+ */
 boolean writeControl() {
         byte location;                      // location on a card where the last data is written
         byte lastWrittenId;                 // last ID of the control writen on the card  
@@ -361,6 +411,13 @@ boolean writeControl() {
       
 }
 
+/**
+ * 
+ * reads all control data from the RFID card
+ * 
+ * @return boolean  - true if it's read OK, false if not.
+ * 
+ */
 boolean readOutAllControls() {
         byte location;                      // location on a card where the last data is written. Number cannot be bigger than 255.
     
@@ -440,7 +497,11 @@ boolean readOutAllControls() {
         return true;
 }
 
-
+/**
+ * cleares data from the RFID card
+ * 
+ * @return boolean  - true if it cleared the card, false if not.
+*/
 boolean clearCard() {
 
    
@@ -530,6 +591,55 @@ boolean clearCard() {
 
     
 }
+
+
+/**
+ * write len bytes to external EEPROM 
+ * 
+ * Note: there should be a 5msec delay after this function, as it's not added into the code.
+ * 
+ * @param deviceaddress  the I2C address of the external EEPROM 
+ * @param eeeaddress     the byte address where to start writing
+ * @param *data          pointer on the first element of data (or address of an array)
+ * @param len            how many bytes to write. Try to make len less than 32. 
+ * 
+ * 
+ */
+void i2c_eeprom_write_bytes( int deviceaddress, unsigned int eeaddress, byte *data, byte len) {
+    Wire.beginTransmission(deviceaddress);
+    Wire.write((int)(eeaddress >> 8)); // MSB
+    Wire.write((int)(eeaddress & 0xFF)); // LSB
+    Wire.write( data, len );
+    Wire.endTransmission();
+
+    // there should be a few ms delay here!!!
+  }
+
+/**
+ * read len bytes from external EEPROM 
+ * 
+ * Note: there should be a 5msec delay after this function, as it's not added into the code.
+ * 
+ * @param deviceaddress  the I2C address of the external EEPROM 
+ * @param eeeaddress     the byte address where to start reading
+ * @param *data          pointer on the first element of data (or address of an array) where you want the data
+ * @param len            how many bytes to read. Try to make len less than 32. 
+ * 
+ */
+
+void i2c_eeprom_read_bytes( int deviceaddress, unsigned int eeaddress,  byte *data, byte len  ) {
+    Wire.beginTransmission(deviceaddress);
+    Wire.write((int)(eeaddress >> 8)); // MSB
+    Wire.write((int)(eeaddress & 0xFF)); // LSB
+    Wire.endTransmission();
+    Wire.requestFrom( deviceaddress,(int) len);
+    while (Wire.available()) { 
+      *data = Wire.read();
+      data++;
+    }
+  }
+
+
 
 /**
  * write a byte somewhere on the card

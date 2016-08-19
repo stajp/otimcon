@@ -1,18 +1,32 @@
 
+/**
+ * function sends date time out through the serial
+ * 
+ * @param DateTime t  which is sent out
+ */
 void serialDateTime( DateTime t) {
    Serial.print(t.year(), DEC);
    Serial.print(F("/"));
+   Serial.print(t.month()<10 ? "0" : "");
    Serial.print(t.month(), DEC);
    Serial.print(F("/"));
+   Serial.print(t.day()<10 ? "0" : "");
    Serial.print(t.day(), DEC);
    Serial.print(F(" "));
+   Serial.print(t.hour()<10 ? "0" : "");
    Serial.print(t.hour(), DEC);
    Serial.print(F(":"));
+   Serial.print(t.minute()<10 ? "0" : "");
    Serial.print(t.minute(), DEC);
    Serial.print(F(":"));
+   Serial.print(t.second()<10 ? "0" : "");
    Serial.print(t.second(), DEC);
 }
 
+/**
+ * function prints out the UID of the current RFID card
+ * 
+ */
 void serialPrintUid() {
        for (byte i = 0; i < mfrc522.uid.size; i++) {
                    Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
@@ -20,16 +34,27 @@ void serialPrintUid() {
                 } 
 }
 
+/**
+ * function prints >
+ */
 void printCursor() {
    Serial.print(F(">"));
 }
 
+/**
+ * function to set the time to DS3231
+ * 
+ * This function is used by SerialCommand library
+ */
 void setTime(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
+
+
+  boolean timeSet=true;  // say that time is set
   
-  boolean timeSet=true;
-  
-  if (arg != NULL) {    // As long as it existed, take it
+  if (arg != NULL) {    // As long as a parameter exists, take it
+    
+       // there is no additional checkup, thread cerefully 
        uint16_t year = 1000 * (arg[0] - '0') + 100 * (arg[1] - '0') + 10 * (arg[2] - '0') + arg[3] - '0';
        uint8_t month = 10 * (arg[4] - '0') + arg[5] - '0';
        uint8_t day = 10 * (arg[6] - '0') + arg[7] - '0';
@@ -39,11 +64,11 @@ void setTime(SerialCommand *cmd) {
 
        rtc.adjust(DateTime( year, month, day, hour, minute, second));
   }
-  else {
+  else {     // if there is no argument, then time is not set
      timeSet=false;
   }
 
-  // if the new mode is set, then return the mode, otherwise send to unrecognized command 
+  // if the new time is set, then return the time, otherwise send to unrecognized command 
   if ( timeSet ) {
     getTime();
   }
@@ -52,6 +77,9 @@ void setTime(SerialCommand *cmd) {
   }
 }
 
+/**
+ * returns time in UNIX epoch format (seconds from 1970/1/1 00:00:00) and in human readable form
+ */
 void getTime() {
   Serial.println();
   Serial.print(F("Time:"));
@@ -65,22 +93,22 @@ void getTime() {
 }
 
 
-void getControl() {
-  Serial.println();
-  Serial.print(F("Control:"));
-  Serial.println(controlId);
-  printCursor();
-}
-
+/**
+  * function to set the control identifing number
+ * 
+ * This function is used by SerialCommand library
+ */
 void setControl(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
+
+  // set the controlId to -1, just to check if read fails.
   int newControlId=-1;
   
-  boolean controlSet = true;
+  boolean controlSet = true;  // imagine that the controlid will be properly set
   
-  if (arg != NULL) {
-    newControlId = atoi(arg); 
-    if (newControlId > 0 && newControlId<255) {
+  if (arg != NULL) { // if there is a parameter, use it.
+    newControlId = atoi(arg);  // convert to number
+    if (newControlId > 0 && newControlId<255) {   // check for validity
       controlId = newControlId;
     }  
     else {
@@ -90,9 +118,10 @@ void setControl(SerialCommand *cmd) {
   else {
     controlSet = false;
   }
-  
+
+  // if controlId is set, then update the EEPROM, and return the new control id.
   if (  controlSet  ) {
-    EEPROM.write(EEPROM_ADDRESS_CONTROL_ID, controlId);              // set ID of the control station. Any number between 1-250.      
+    EEPROM.update(EEPROM_ADDRESS_CONTROL_ID, controlId);              // set ID of the control station. Any number between 1-250.      
     getControl();
   }
   else {
@@ -100,14 +129,29 @@ void setControl(SerialCommand *cmd) {
   }
 }
 
+/**
+ * returns current control number
+ */
+void getControl() {
+  Serial.println();
+  Serial.print(F("Control:"));
+  Serial.println(controlId);
+  printCursor();
+}
 
+
+/**
+  * function to set the control mode
+ * 
+ * This function is used by SerialCommand library
+ */
 void setMode(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
   
   boolean modeSet=true;
   
-  if (arg != NULL) {    // As long as it existed, take it
-     if (strcmp(arg, "CONTROL") == 0){
+  if (arg != NULL) {    // As long as parameter exists, take it
+     if (strcmp(arg, "CONTROL") == 0){  // set the wanted control mode
        controlFunction = CONTROL; 
      } 
      else 
@@ -122,7 +166,7 @@ void setMode(SerialCommand *cmd) {
             if (strcmp(arg, "CLEAR") == 0){
               controlFunction = CLEAR;  
             }
-            else  {
+            else  {    // if everything fails, we're here!
               modeSet=false;
             }
   }
@@ -132,8 +176,7 @@ void setMode(SerialCommand *cmd) {
 
   // if the new mode is set, then return the mode, otherwise send to unrecognized command 
   if ( modeSet ) {
-    EEPROM.write(EEPROM_ADDRESS_MODE, controlFunction); // set function as control
-
+    EEPROM.update(EEPROM_ADDRESS_MODE, controlFunction); // set function as control
     getMode();
   }
   else {
@@ -141,6 +184,9 @@ void setMode(SerialCommand *cmd) {
   }
 }
 
+/**
+ * returns current mode
+ */
 void getMode() {
   Serial.println();
   Serial.print(F("Mode:"));
@@ -155,7 +201,7 @@ void getMode() {
 }
 
 /**
- * function which serial outputs voltage
+ * function which serial outputs voltage connected to analog port 2
  * 
  * use the VOLTAGE_REFERENCE for the maximum value of 1024
  * 
@@ -180,6 +226,9 @@ void getVoltage() {
  
 }
 
+/**
+ * function outputs version over the serial
+ */
 void getVersion() {
   Serial.println();
   Serial.println(F("Version:"));
@@ -187,7 +236,80 @@ void getVersion() {
   printCursor();
 }
 
+/**
+ * this functions resets the pointer from where the external memory starts to record data about cards
+ * 
+ * 
+ * this isn't necessary as there is an rollover for locationOnExternalEEPROM.
+ * but it's nice to start from 0.  
+ *
+ */
+void setResetBackup() {
+  Serial.println();
+  Serial.println(F("Backup pointer resetted to 0!"));
+  locationOnExternalEEPROM = 0;
+  EEPROM.update(EEPROM_ADDRESS_24C32_LOCATION,(short int) 0);
 
+#ifndef USE_EEPROM_BACKUP  
+  Serial.println(F("Although - there is no support for backup!"));
+#endif
+
+  printCursor();  
+}
+
+/**
+ * this function outputs to serial the data from the whole external EEPROM memory, even the parts which were not used.
+ */
+void getBackup() {
+#ifdef USE_EEPROM_BACKUP  
+  byte dataFromEEPROM[8]; // 8 bytes will be read from the EEPROM to this array
+  byte uid[4];            // after reading data will be separated into UID and time
+  byte timeArray[4];
+  
+  Serial.println();
+  Serial.println(F("Backup:"));
+
+  // go though whole external memory (in chunks of 8 bytes)
+  for (short int i=0; i<EXTERNAL_EEPROM_SIZE; i+=8) {
+      // read 8 bytes from the "i" position
+      i2c_eeprom_read_bytes(EEEPROM_I2C_ADDRESS, i, dataFromEEPROM, 8);
+      
+      Serial.print(F("^"));
+
+      // separate the time and uid
+      memcpy(timeArray, dataFromEEPROM, 4);
+      memcpy(uid, dataFromEEPROM+4, 4);
+
+      // print uid
+      for (byte j = 0; j < 4; j++) {
+                   Serial.print(uid[j] < 0x10 ? " 0" : " ");
+                   Serial.print(uid[j], HEX);
+                } 
+      Serial.print(F(","));
+
+      // print time in UNIX epoch timestamp and human form
+      long int timestamp =  (((long int)timeArray[3]) << 24) | (((long int) timeArray[2]) << 16) | (((long int)timeArray[1]) << 8) | (timeArray[0]);
+      DateTime t(timestamp);
+      Serial.print(timestamp);
+      Serial.print(F(","));
+      serialDateTime(t);
+      Serial.println(F("#"));
+  }
+  Serial.println(F("$"));    
+#else
+  Serial.println(F("No support for backup!"));
+#endif
+  printCursor();
+  
+}
+
+/**
+ * function to print help to screen
+ * 
+ *  
+ * Used by SerialCommand library
+ *
+ */
 void help(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
   if (arg == NULL) {
@@ -205,6 +327,8 @@ void help(SerialCommand *cmd) {
       Serial.println(F("TIME YYYYMMDDhhmmss : Set time in year[Y], month[M], day[D], hour[h], minute[m], second[s] format"));
       Serial.println(F("CTRL number         : Set control ID as number (1-250) [special code for START/FINISH"));
       Serial.println(F("MODE type           : Set modes"));
+      Serial.println(F("RESET_BACKUP        : Reset pointer of internal memory backup"));
+      
     }
     else if (strcmp(arg, "GET") == 0) {
       Serial.println();
@@ -212,6 +336,7 @@ void help(SerialCommand *cmd) {
       Serial.println(F("TIME                : Get time in format YYYY/MM/DD hh:mm:ss - year[Y], month[M], day[D], hour[h], minute[m], second[s]"));
       Serial.println(F("CTRL                : Get control ID as number (1-250) [special code for START/FINISH]"));
       Serial.println(F("MODE                : Get mode status"));
+      Serial.println(F("BACKUP              : Get backup of whole card memory"));
       Serial.println(F("VERSION             : Get current firmware version"));
       Serial.println(F("VOLTAGE             : Get current battery voltage"));
     }
@@ -220,7 +345,11 @@ void help(SerialCommand *cmd) {
   printCursor();
 }
 
-// This gets set as the default handler, and gets called when no other command matches.
+/**
+ * This gets set as the default handler, and gets called when no other command matches.
+ *
+ * Used by SerialCommand library
+  */
 void unrecognized(SerialCommand *cmd) {
   Serial.println();
   Serial.print(F("Unknown Argument '"));
