@@ -134,8 +134,8 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
   byte blockNumber = 8+location/3+location/9;  // calculate the block number -> this jumps over the section trailer blocks
   byte locationInBlock = 5*(location%3);       // calculate the location inside one block - there are 3 locations (each is 5 bytes) in one 16 byte block -> bytes 0, 5 or 10. 
  
-  readBlock(blockNumber, readbackblock);      //read the whole block back
-
+  if (readBlock(blockNumber, readbackblock) != 1)  //read the whole block back. If there's an error, drop out
+                return false;
 
    // write data for the location: first byte = id of the control; next 4 bytes = timestamp
    readbackblock[locationInBlock] = id;
@@ -153,7 +153,9 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
 
    if (writingInfo == 1) {
      // write data to infoBlock (block 4)
-     readBlock(4, readbackblock);               //read the block back
+     if (readBlock(4, readbackblock) != 1) 
+          return false;                          //read the block back
+          
      readbackblock[1] = location;               // set the location of the last written control
      readbackblock[5] = id;                     // set the ID of the last written control
 
@@ -168,7 +170,8 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
      writingInfo = writeBlock(4,readbackblock);   // write it to infoBlock (block 4)
      
      if (writingInfo == 1) {                      // if written propely (1 means success, 2-4 are errors), try to readout and check for success
-        readBlock(blockNumber, readbackblock);      //read the whole location block back and check it!
+        if (readBlock(blockNumber, readbackblock) != 1)
+                return false;                     //read the whole location block back and check it!
         if ( readbackblock[locationInBlock] == id &&
              readbackblock[locationInBlock+1] == timestampArray[0] && 
              readbackblock[locationInBlock+2] == timestampArray[1] &&
@@ -177,7 +180,7 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
              readbackblock[15] == CRC8(readbackblock,15)) {
               
                 // if we're here, then the read of the location block was OK. Read the info block (block 4)
-                 readBlock(4, readbackblock);               //read the block back
+                 if (readBlock(4, readbackblock) != 1 ) return false;               //read the block back
                  if ( readbackblock[1] == location && readbackblock[5] == id && 
                       readbackblock[6] == timestampArray[0] && 
                       readbackblock[7] == timestampArray[1] &&
@@ -295,24 +298,27 @@ byte writeBlock(byte blockNumber, byte arrayAddress[])
  */
 void bleep() {
   
-  // do this 3 times: turn on LED, make a 2.5kHz tone for 50ms, turn off LED, make a 3.5kHz tone for 50ms
-  // sound on for 300ms, LED on for 150ms
-  
-  for (int i=0; i<3; i++) {
-    
+  // turn on LED, make a 3.5kHz tone for 40ms, turn off LED, make a 3.5kHz tone for 200ms
+  // sound on for 240ms, LED is turned on for 40ms
+
+  // 3.5kHz is the optimal for piezo I use. It sounds the loudest at that frequency
+
+  // tone is constant, the led blinks rapidly   
 #ifdef USE_LED
     digitalWrite(FEEDBACK_LED, HIGH);
 #endif
 #ifdef USE_PIEZO
-    tone(FEEDBACK_PIEZO, 2500, 50);    
+    tone(FEEDBACK_PIEZO, 3500, 40);    
 #endif
 #ifdef USE_LED
     digitalWrite(FEEDBACK_LED, LOW);
 #endif
 #ifdef USE_PIEZO
-    tone(FEEDBACK_PIEZO, 3500, 50);
+    tone(FEEDBACK_PIEZO, 3500, 200);    
 #endif
-  }
+
+  
+  
   
 }
 
@@ -331,10 +337,32 @@ void sleep() {
   Serial.print(F("Sleeping"));
 #endif
 
-  LowPower.powerDown(SLEEP_120MS, ADC_OFF, BOD_OFF);
-    
+  // this should put the MRFC522 into power-down - it is setting the PowerDown bit in CommandReg register
+  mfrc522.PCD_SetRegisterBitMask(mfrc522.CommandReg, 1<<4);
 
+  deepSleepCounter++;
+
+  // if the short sleep is 250ms, then this comes out as 1h  (68min) delay before going to deep sleep
+  if (deepSleepCounter < 0x3FFF) {
+    // shallow sleep of 250ms  (fast reaction to card)
+    LowPower.powerDown(SLEEP_250MS, ADC_OFF, BOD_OFF);
+  }
+  else {  // in deep sleep power down for 2 seconds (slow reaction to card).
+    LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
+    deepSleepCounter = 0x8000;
+  }
+  // wake up the MRFC522 
  
+  // clear the PowerDown bit in CommandReg register
+  mfrc522.PCD_ClearRegisterBitMask(mfrc522.CommandReg, 1<<4);
+
+  // waking up of MRFC522 depends on oscillator, so it needs extra time. MFRC522 library even takes 50ms, which is probably too too long, and then checks
+  // this is somewhat faster (we want to be back to sleep as fast as possible).
+  delay(1);
+  while (mfrc522.PCD_ReadRegister(mfrc522.CommandReg) & (1<<4)) {
+    // PCD still restarting - unlikely after waiting 50ms, but better safe than sorry.
+    delay(1);
+  }
   
   
 }
@@ -355,7 +383,7 @@ boolean writeControl() {
           readBlock(4, readbackblock);                        //read block 4 which has all the basic data. This array will be used (and reused) to detect several necessary information 
 
      
-         if ( readbackblock[0] != 1 ) {                       // read the first byte which houses the check if the card is prepared for OTICON. If not, bail out.
+         if ( readbackblock[0] != OTIMCON_CARD_TYPE ) {                       // read the first byte which houses the check if the card is prepared for OTICON. If not, bail out.
             if (useSerial) Serial.println(F("Error: Card not prepared"));
             
             return false;   // card is not initialized for use in OTICON
@@ -391,7 +419,8 @@ boolean writeControl() {
          }
 
          // if card is full, don't write, but don't bleep either, so return false!
-         if ( location >= 125 ) {
+         // only exception is when the card is empty, and then the location is -1 (or 0xFF in 8-bit integer)!
+         if ( location >= 125 && location != 0xFF ) {
             return false;
          }
 
@@ -435,7 +464,7 @@ boolean readOutAllControls() {
        readBlock(4, readbackblock);                        //read block 4 which has all the basic data. This array will be used (and reused) to detect several necessary information 
 
      
-        if ( readbackblock[0] != 1 ) {                       // read the first byte which houses the check if the card is prepared for OTICON. If not, bail out.
+        if ( readbackblock[0] != OTIMCON_CARD_TYPE ) {                       // read the first byte which houses the check if the card is prepared for OTICON. If not, bail out.
             if (useSerial) {
               Serial.println(F("Error: Card not prepared"));
             }
@@ -445,8 +474,8 @@ boolean readOutAllControls() {
         location      = readbackblock[1];   // read location of the last written control
         byte startLocation = location;           // know from where the list started
         
-        // if location is 0, then the card is empty, nothing to readback.
-        if (location == 0 ) return true;
+        // if location is -1, then the card is empty, nothing to readback.
+        if (location == 0XFF ) return true;
         
         // now it will go back in memory, reading blocks, and retrieving locations until happens one of the following:
         // 1) comes to location 0
@@ -455,15 +484,20 @@ boolean readOutAllControls() {
         boolean stillSearching = true;
         
         byte oldBlockNumber = -1;   // set the inital block to -1, as we won't reread block unless necessary.
+        byte antiblockCounter = 50;  // this is just in case somebody removes the card prior to complete readout - it crashes badly without this.
         
-        while ( stillSearching ) {
+        while ( stillSearching &&  antiblockCounter != 0) {
+
+           antiblockCounter--;
            
            byte blockNumber = 8+location/3+location/9;  // calculate the block number -> this jumps over the section trailer blocks
           
            // if this block isn't the same as for previous location, then read the new block. Otherwise the block is already in memory.
            if (oldBlockNumber != blockNumber) {
-              readBlock(blockNumber, readbackblock);      //read the whole block back
-
+                    
+              if (readBlock(blockNumber, readbackblock) != 1)  //read the whole block back. If there's an error, drop out
+                return false;
+                
               // if CRC of the block is invalid, then jump over the rest of the loop, as this block is obviuosly compromised
               if (readbackblock[15] != CRC8(readbackblock,15)) 
                 continue;
@@ -475,7 +509,7 @@ boolean readOutAllControls() {
            byte locationInBlock = 5*(location%3);       // calculate the location inside one block - there are 3 locations (each is 5 bytes) in one 16 byte block -> bytes 0, 5 or 10. 
 
            // will print output if the control on current location (which changes inside the loop) isn't a FINISH control or if it is a finish control but it's the last control in the list
-           if ( readbackblock[locationInBlock] != FINISH_CONTROL_ID || ( readbackblock[locationInBlock] == FINISH_CONTROL_ID && location == startLocation)) {
+           if ( (readbackblock[locationInBlock] != FINISH_CONTROL_ID || ( readbackblock[locationInBlock] == FINISH_CONTROL_ID && location == startLocation)) || !normalReadout) {
               Serial.print( readbackblock[locationInBlock] );  // print the ID of the control
               Serial.print(F(","));
     
@@ -487,6 +521,8 @@ boolean readOutAllControls() {
               Serial.print(F(","));
               serialDateTime(t);
               Serial.println(F("#"));
+              
+              antiblockCounter = 50;
           }
           else {
               // this means that the control found was a finish control (but not as the last control on the card
@@ -494,7 +530,7 @@ boolean readOutAllControls() {
           }
           
           // if the Serial.printed control was a start control or at location 0, then stop searching,
-          if ( readbackblock[locationInBlock] == START_CONTROL_ID || location == 0 ) {
+          if ( (readbackblock[locationInBlock] == START_CONTROL_ID && normalReadout) || location == 0 ) {
              stillSearching = false;
           } 
 
@@ -503,7 +539,7 @@ boolean readOutAllControls() {
         }         
 
         // if everything was outputted then return to the main loop.
-        return true;
+        return !stillSearching;
 }
 
 /**
@@ -574,11 +610,11 @@ boolean clearCard() {
          if (readBlock(4, readbackblock) != 1) 
             return false;                    
      
-         readbackblock[0] = 1;                           // prepare card for OTICON. This is a safety in the system so other cards aren't overwritten by mistake on "normal" controls.
+         readbackblock[0] = OTIMCON_CARD_TYPE;     // prepare card for OTIMCON. This is a safety in the system so other non-OTIMCON racing cards aren't overwritten by mistake on "normal" controls.
 
-         readbackblock[1] = 0;                          // set location of first writing to 0
+         readbackblock[1] = 0xFF;                  // set location of first writing to -1 (when writing address is increased by one _PRIOR_ to writing, so start from -1 to write to position 0)
          
-         readbackblock[5] = 0xFF;                       // set last control to 0xFF
+         readbackblock[5] = 0xFF;                  // set last control to 0xFF
          
          // erase the last control time
          readbackblock[6] = 0xFF;

@@ -41,7 +41,7 @@ void printCursor() {
    Serial.print(F(">"));
 
     // reset the sleep counter
-    sleepCounter = 0;
+    shallowSleepCounter = 0;
 }
 
 /**
@@ -49,7 +49,7 @@ void printCursor() {
  * 
  * This function is used by SerialCommand library
  */
-void setTime(SerialCommand *cmd) {
+void s_setTime(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
 
 
@@ -73,17 +73,17 @@ void setTime(SerialCommand *cmd) {
 
   // if the new time is set, then return the time, otherwise send to unrecognized command 
   if ( timeSet ) {
-    getTime();
+    s_getTime();
   }
   else {
-    unrecognized(cmd); 
+    s_unrecognized(cmd); 
   }
 }
 
 /**
  * returns time in UNIX epoch format (seconds from 1970/1/1 00:00:00) and in human readable form
  */
-void getTime() {
+void s_getTime() {
   Serial.println();
   Serial.print(F("Time:"));
   DateTime t = rtc.now();
@@ -101,7 +101,7 @@ void getTime() {
  * 
  * This function is used by SerialCommand library
  */
-void setControl(SerialCommand *cmd) {
+void s_setControl(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
 
   // set the controlId to -1, just to check if read fails.
@@ -125,17 +125,17 @@ void setControl(SerialCommand *cmd) {
   // if controlId is set, then update the EEPROM, and return the new control id.
   if (  controlSet  ) {
     EEPROM.update(EEPROM_ADDRESS_CONTROL_ID, controlId);              // set ID of the control station. Any number between 1-250.      
-    getControl();
+    s_getControl();
   }
   else {
-    unrecognized(cmd);
+    s_unrecognized(cmd);
   }
 }
 
 /**
  * returns current control number
  */
-void getControl() {
+void s_getControl() {
   Serial.println();
   Serial.print(F("Control:"));
   Serial.println(controlId);
@@ -148,7 +148,7 @@ void getControl() {
  * 
  * This function is used by SerialCommand library
  */
-void setMode(SerialCommand *cmd) {
+void s_setMode(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
   
   boolean modeSet=true;
@@ -160,18 +160,25 @@ void setMode(SerialCommand *cmd) {
      else 
         if (strcmp(arg, "CONTROL_WITH_READOUT") == 0){
           controlFunction = CONTROL_WITH_READOUT;
+          normalReadout = true;
         }
         else 
           if (strcmp(arg, "READOUT") == 0){
             controlFunction = READOUT;
+            normalReadout = true;
           }
           else 
             if (strcmp(arg, "CLEAR") == 0){
               controlFunction = CLEAR;  
             }
-            else  {    // if everything fails, we're here!
-              modeSet=false;
-            }
+            else 
+              if (strcmp(arg, "CRAZY_READOUT") == 0){    // special option, if needed to read _EVERYTHING_ off the card
+               controlFunction = READOUT;
+               normalReadout = false;
+              }
+              else  {    // if everything fails, we're here!
+                modeSet=false;
+              }
   }
   else {
      modeSet=false;
@@ -180,17 +187,17 @@ void setMode(SerialCommand *cmd) {
   // if the new mode is set, then return the mode, otherwise send to unrecognized command 
   if ( modeSet ) {
     EEPROM.update(EEPROM_ADDRESS_MODE, controlFunction); // set function as control
-    getMode();
+    s_getMode();
   }
   else {
-    unrecognized(cmd); 
+    s_unrecognized(cmd); 
   }
 }
 
 /**
  * returns current mode
  */
-void getMode() {
+void s_getMode() {
   Serial.println();
   Serial.print(F("Mode:"));
   switch (controlFunction) {
@@ -209,7 +216,7 @@ void getMode() {
  * use the VOLTAGE_REFERENCE for the maximum value of 1024
  * 
  */
-void getVoltage() {
+void s_getVoltage() {
  ADCSRA =  bit (ADEN); 
  
   analogReference (ANALOG_REFERENCE);
@@ -236,7 +243,7 @@ void getVoltage() {
 /**
  * function outputs version over the serial
  */
-void getVersion() {
+void s_getVersion() {
   Serial.println();
   Serial.println(F("Version:"));
   Serial.println(F(SW_VERSION));
@@ -251,7 +258,7 @@ void getVersion() {
  * but it's nice to start from 0.  
  *
  */
-void setResetBackup() {
+void s_setResetBackup() {
   Serial.println();
   Serial.println(F("Backup pointer resetted to 0!"));
   locationOnExternalEEPROM = 0;
@@ -267,7 +274,7 @@ void setResetBackup() {
 /**
  * this function outputs to serial the data from the whole external EEPROM memory, even the parts which were not used.
  */
-void getBackup() {
+void s_getBackup() {
 #ifdef USE_EEPROM_BACKUP  
   byte dataFromEEPROM[8]; // 8 bytes will be read from the EEPROM to this array
   byte uid[4];            // after reading data will be separated into UID and time
@@ -317,7 +324,7 @@ void getBackup() {
  * Used by SerialCommand library
  *
  */
-void help(SerialCommand *cmd) {
+void s_help(SerialCommand *cmd) {
   char *arg = cmd->nextToken();
   if (arg == NULL) {
     Serial.println();
@@ -347,7 +354,7 @@ void help(SerialCommand *cmd) {
       Serial.println(F("VERSION             : Get current firmware version"));
       Serial.println(F("VOLTAGE             : Get current battery voltage"));
     }
-      else unrecognized(cmd);
+      else s_unrecognized(cmd);
   }
   printCursor();
   
@@ -358,7 +365,7 @@ void help(SerialCommand *cmd) {
  *
  * Used by SerialCommand library
   */
-void unrecognized(SerialCommand *cmd) {
+void s_unrecognized(SerialCommand *cmd) {
   Serial.println();
   Serial.print(F("Unknown Argument '"));
   Serial.print(cmd->lastToken());

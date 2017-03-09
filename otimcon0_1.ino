@@ -1,9 +1,9 @@
-#define SW_VERSION "0.17"
+#define SW_VERSION "0.18"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
- *  Version: 0.14 
- *  Date: 20160817
+ *  Version: 0.18 
+ *  Date: 20170309
  *  Created by: Stipe Predanic (stipe.predanic (at) gmail.com)
  **************************************************************
  *
@@ -19,11 +19,11 @@
  *  SW:
  *  - Arduino IDE on a host computer 
  *  - Arduino libraries:
- *    + MFRC522 (download from http://makecourse.weebly.com/week10segment1.html , others may work)
- *    + RTCLib (any version https://github.com/adafruit/RTClib/network )
+ *    + MFRC522 (download from http://makecourse.weebly.com/week10segment1.html , others may work e.g. the one in Arduino IDE)
+ *    + RTCLib (any version, AdaFruit version is available in Arduino IDE )
  *    + SerialCommand Library ( https://github.com/kiwisincebirth/Arduino-SerialCommand )
- *    + LowPower Library (available in Arduino IDE)
- *    + PinChangeInterrupt (available in Arduino IDE)
+ *    + Low-Power Library by RocketScream (available in Arduino IDE)
+ *    + PinChangeInterrupt by NicoHood (available in Arduino IDE)
  *
  **************************************************************
  *
@@ -74,9 +74,15 @@
  *         -> if low power is not used (comment out a define), then serial always works as expected.
  *         -> by default LOW POWER is NOT USED!
  *         
- *         
- *            
- *      
+ *  - version 0.18 201700306   
+ *      - sleep for low power works doesn't block the system, but it's not tested with multimeter. 
+ *      - Low power is now DEFAULT.
+ *      - changed the identifier of a card ready for OTIMCON from "1" to custom number defined in  OTIMCON_CARD_TYPE
+ *      - changed the sound and led signalling. Now it works better.
+ *      - added mode CRAZY_READOUT. It will read the whole RFID card, ignoring the START and FINISH controls. 
+ *      - fixed a bug with position 0
+ *      - fixed a bug when card was removed in a long readout
+ *        
  *  
 */
 
@@ -85,7 +91,7 @@
 #include <MFRC522.h>      //include the RFID reader library
 #include <Wire.h>
 #include <RTClib.h>       // include timer library 
-#include <SerialCommand.h>  // iclude serial command system
+#include <SerialCommand.h>  // include serial command system
 #include <EEPROM.h>
 #include "LowPower.h"
 
@@ -105,7 +111,7 @@
 #define USE_SERIAL_ALWAYS  
                      
 // comment this if you don't need low power work (the system won't go to sleep but serial will always work)
-//#define LOW_POWER  
+#define LOW_POWER  
 
 
 
@@ -119,7 +125,7 @@
 #define RST_PIN             9                 //reset pin
 
 #define FEEDBACK_LED        8                 // pin for LED
-#define FEEDBACK_PIEZO     7                 // piezo
+#define FEEDBACK_PIEZO      7                 // piezo
 
 #define SERIAL_ACTIVE_PIN   6                // if you want to use serial only when needed, then select a pin (this is D6) and connect it HIGH 
 
@@ -149,10 +155,12 @@
 
 
 // define the function of the control
+// should convert to enum but I like it this way
 #define CONTROL 1                // works as a standard control with id
 #define CONTROL_WITH_READOUT 2   // works as a control which has a readout of all previouos controls
 #define READOUT 3                // works as a readout only
-#define CLEAR 4                  // works as a clear
+#define CLEAR 4                  // works as a clear, and prepares a card for OTIMCON
+
 
 
 #define EEPROM_ADDRESS_MODE       10  // address in EEPROM for saving mode
@@ -164,17 +172,27 @@
 
 #define EXTERNAL_EEPROM_SIZE       4096  // maximum number of bytes in external EEPROM 
 
+
+// a special code found on byte 0 of block 4, which detects that card is prepared for OTIMCON.
+// THIS constant _MUST_ be the _SAME_ at all OTIMCON controls in one competition! 
+// This is a security if other cards (non-race cards) are put at the OTIMCON control.
+// !! Nothing will be written if card is not prepared by touching the CLEAR control.!!
+// !! DON'T TOUCH UNLESS YOU KNOW WHAT YOU ARE DOING !!
+#define OTIMCON_CARD_TYPE      0xAD      
+
+
 static RTC_DS3231 rtc;
 static MFRC522 mfrc522(SS_PIN, RST_PIN);        // instatiate a MFRC522 reader object.
 static MFRC522::MIFARE_Key key;                 //create a MIFARE_Key struct named 'key', which will hold the card information
 
 static byte controlId;                         // current ID of this station (from now on called control)    
 static byte readbackblock[18];                 //This array is used for reading out a block. The MIFARE_Read method requires a buffer that is at least 18 bytes to hold the 16 bytes of a block.
-static long currentTime;                // currentTime, used for saving the time from RTC (without the need of continuos read in functions).
+static long currentTime;                       // currentTime, used for saving the time from RTC (without the need of continuos read in functions).
 
 
 boolean useSerial = true;
 boolean cardPresent = false;
+boolean normalReadout = true;                 // don't do normal readout only if you need to read the whole card (due to problems with START/FINISH stations)
 
 byte controlFunction;
 
@@ -182,7 +200,9 @@ byte controlFunction;
 static short int locationOnExternalEEPROM = 0;
 #endif
 
-static unsigned short sleepCounter;
+
+static unsigned short deepSleepCounter;
+static unsigned short shallowSleepCounter;
 
 static SerialCommand  sCmd   = SerialCommand();       // The demo SerialCommand object
 static CommandHandler sHand1 = CommandHandler(sCmd);  // the main command handler
@@ -207,7 +227,7 @@ void setup() {
         while (1);   // sketch halts in an endless loop
       }
 
-      // if RTC is running, check the time. If the time differs more than 15 seconds off the computer clock, then it's set back to computer clock 
+      // if RTC is running, check the time. If the time differs more than 15 seconds off the computer clock, then it's set the same as computer clock 
       // warning: it will reset back to uploading time, if there is no backup battery on DS3231
       DateTime now = rtc.now();
       DateTime compiled = DateTime(F(__DATE__), F(__TIME__));
@@ -252,10 +272,11 @@ void setup() {
 
 /****
 */
+#if ANALOG_REFERENCE == INTERNAL
         // uncomment this if you want to use internal analog reference of 1.1V
         // BE CAREFUL WITH SETTING THE INPUT.
         // analogReference(INTERNAL);
-
+#endif
 /*
 ****** */
 
@@ -265,24 +286,24 @@ void setup() {
   // Setup callbacks for the main SerialCommand. These are the main commands
   sHand1.addHandler("SET",    sHand2);          // Handler for everything starting with SET
   sHand1.addHandler("GET",    sHand3);          // Handler for everything starting with GET
-  sHand1.addCommand("?",      help);            // Handler for help 
-  sHand1.setDefault(          unrecognized);    // Handler for command that isn't matched  (says "What?")
+  sHand1.addCommand("?",      s_help);            // Handler for help 
+  sHand1.setDefault(          s_unrecognized);    // Handler for command that isn't matched  (says "What?")
 
   
   // Setup the commands the SET
-  sHand2.addCommand("TIME",  setTime);         // Set time
-  sHand2.addCommand("CTRL",  setControl);      // Set control number
-  sHand2.addCommand("MODE",  setMode);         // Set mode
-  sHand2.addCommand("RESET_BACKUP",   setResetBackup); // reset backup memory pointer to 0
-  sHand2.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
+  sHand2.addCommand("TIME",  s_setTime);         // Set time
+  sHand2.addCommand("CTRL",  s_setControl);      // Set control number
+  sHand2.addCommand("MODE",  s_setMode);         // Set mode
+  sHand2.addCommand("RESET_BACKUP",   s_setResetBackup); // reset backup memory pointer to 0
+  sHand2.setDefault(         s_unrecognized);    // Handler for command that isn't matched  (says "What?")
   
-  sHand3.addCommand("TIME",  getTime);         // Get current time
-  sHand3.addCommand("CTRL",  getControl);      // Get current control number
-  sHand3.addCommand("MODE",  getMode);         // Get current mode
-  sHand3.addCommand("VOLTAGE",  getVoltage);   // Get battery voltage
-  sHand3.addCommand("VERSION",  getVersion);   // Get current firmware version
-  sHand3.addCommand("BACKUP",  getBackup);     // Get current memory backup in external EEPROM
-  sHand3.setDefault(         unrecognized);    // Handler for command that isn't matched  (says "What?")
+  sHand3.addCommand("TIME",  s_getTime);         // Get current time
+  sHand3.addCommand("CTRL",  s_getControl);      // Get current control number
+  sHand3.addCommand("MODE",  s_getMode);         // Get current mode
+  sHand3.addCommand("VOLTAGE",  s_getVoltage);   // Get battery voltage
+  sHand3.addCommand("VERSION",  s_getVersion);   // Get current firmware version
+  sHand3.addCommand("BACKUP",  s_getBackup);     // Get current memory backup in external EEPROM
+  sHand3.setDefault(         s_unrecognized);    // Handler for command that isn't matched  (says "What?")
 
 
 
@@ -293,7 +314,8 @@ void setup() {
 #endif  
   Serial.print(">");
 
-  sleepCounter = 0;
+  shallowSleepCounter = 0;
+  deepSleepCounter = 0;
 }
 
 
@@ -317,23 +339,24 @@ void loop()
      
      
       
-     // serial will work for about a minute after the card is read, but other times the system is just sleep <-> RFID
-     if (sleepCounter > 0x03FF) {
+     // serial will work for about 15 seconds after the card is read (serial work reset the shallowSleepCounter),
+     // but other times the system is just sleep <-> RFID
+     if (shallowSleepCounter > 0x1FF) {
         Serial.flush();
         sleep();
      } 
-     else {
-          // check serial, if there is something new on connected link
-        if (useSerial) {
-            sCmd.readSerial();     // We don't do much, just process serial commands
-          }
-        sleepCounter++;
-     }
+     
+     // check serial, if there is something new on connected link
+     if (useSerial) {
+         sCmd.readSerial();     // We don't do much, just process serial commands
+      }
+     shallowSleepCounter++;
+     
 
-// if LOW_POWER is commented out, then it it will never go to sleep and Serial will be more responsive.     
+// if LOW_POWER is commented out, then it it will never go to sleep and Serial will be apsolutly responsive.     
 #ifndef LOW_POWER
       Serial.flush();
-      sleepCounter = 0;
+      shallowSleepCounter = 0;
 #endif     
      
    
@@ -410,25 +433,34 @@ void loop()
               serialPrintUid();
               Serial.println(F("$"));
               Serial.println(F(">"));
-              
-                        
            }
       }
+     
 
     }
       
       // for some reason, my hardware doesn't work without reinitialization.
-      // usually there should be some delay between new use (they say 100ms is enough), so do it prior to bleep which is at least 300ms
+      // usually there should be some delay between new use (they say 100ms is enough), so do it prior to bleep which is at least 200ms
       mfrc522.PCD_Init();     
-      
+
+     // mark the card as not present before checking the bleep!
+     cardPresent = false;
+     
       // if it's time to bleep, then bleep! :D
+      // also mark that there is a valid card, and there is no read in reading it again 
       if (timeToBleep) { 
             bleep();
-           
-      }
+            cardPresent = true;
+          }
 
-     cardPresent = true;
-     sleepCounter = 0x1FF;
+      // this should give a seconds of active time before shallow sleep
+          shallowSleepCounter = 0;
+
+     // turn off deep sleep as there are runners who want to use their cards
+     deepSleepCounter = 0;
+      
+
+     
      
          
 /*  DEBUG DATA

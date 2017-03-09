@@ -70,10 +70,18 @@ _Note_ : use Arduino serial monitor for communication or a system that sends _ne
 * How big is BACKUP?
 	* Backup saves last 512 cards (one card can be more than once, for those who forget to erase).
 
-
 * What is info block in the RFID card?
 	* Info block is block 4, where the last location is saved, last control and time of the last control.
 
 * It looks like the serial port isn't working?
 	* Make sure you're using a serial terminal which sends \n newline (most of the terminal software doesn't). Serial monitor in Arduino IDE works nicely. 
 	* Also make sure you're not using LOW POWER mode - in that case use an RFID card on the station prior to serial communication. 
+
+* How can you use a MRFC522 on 5V?
+	* MRFC522 is powered on 3.3V, and it will burn if you try to power it on 5V. But it seems that it can live with 5V on it's SPI port. The schematic given is my test bed, and all the orhers are done on a 3.3V Pro mini. DS3231 can work on either 3.3V or 5V, so it doesn't matter to it, this is just for the MRFC522.
+
+* I did a RESET_BACKUP function but old data is still present in backup?
+	* RESET_BACKUP just resets the internal counter back to 0 (first position), and starts overwriting from there. Nothing to be alarmed, it's like that by design.
+
+
+ 
