@@ -56,7 +56,8 @@ void s_setTime(SerialCommand *cmd) {
   boolean timeSet=true;  // say that time is set
   
   if (arg != NULL) {    // As long as a parameter exists, take it
-    
+       powerToRTC(RTC_POWER_ON);   // RTC and EEPROM are on the same board
+     
        // there is no additional checkup, thread cerefully 
        uint16_t year = 1000 * (arg[0] - '0') + 100 * (arg[1] - '0') + 10 * (arg[2] - '0') + arg[3] - '0';
        uint8_t month = 10 * (arg[4] - '0') + arg[5] - '0';
@@ -78,12 +79,14 @@ void s_setTime(SerialCommand *cmd) {
   else {
     s_unrecognized(cmd); 
   }
+   powerToRTC(RTC_POWER_OFF);   // RTC and EEPROM are on the same board
 }
 
 /**
  * returns time in UNIX epoch format (seconds from 1970/1/1 00:00:00) and in human readable form
  */
 void s_getTime() {
+  powerToRTC(RTC_POWER_ON);   // RTC and EEPROM are on the same board
   Serial.println();
   Serial.print(F("Time:"));
   DateTime t = rtc.now();
@@ -93,6 +96,8 @@ void s_getTime() {
   serialDateTime(t);
   Serial.println(F(""));
   printCursor();
+  powerToRTC(RTC_POWER_OFF);   // RTC and EEPROM are on the same board
+  
 }
 
 
@@ -259,6 +264,8 @@ void s_getVersion() {
  *
  */
 void s_setResetBackup() {
+  powerToRTC(RTC_POWER_ON);   // RTC and EEPROM are on the same board
+                          
   Serial.println();
   Serial.println(F("Backup pointer resetted to 0!"));
   locationOnExternalEEPROM = 0;
@@ -267,8 +274,10 @@ void s_setResetBackup() {
 #ifndef USE_EEPROM_BACKUP  
   Serial.println(F("Although - there is no support for backup!"));
 #endif
-
+                          
   printCursor();  
+  powerToRTC(RTC_POWER_OFF);   // RTC and EEPROM are on the same board
+ 
 }
 
 /**
@@ -279,7 +288,9 @@ void s_getBackup() {
   byte dataFromEEPROM[8]; // 8 bytes will be read from the EEPROM to this array
   byte uid[4];            // after reading data will be separated into UID and time
   byte timeArray[4];
-  
+
+  powerToRTC(RTC_POWER_ON);   // RTC and EEPROM are on the same board
+ 
   Serial.println();
   Serial.println(F("Backup:"));
 
@@ -314,7 +325,8 @@ void s_getBackup() {
   Serial.println(F("No support for backup!"));
 #endif
   printCursor();
-  
+  powerToRTC(RTC_POWER_OFF);   // RTC and EEPROM are on the same board
+ 
 }
 
 /**

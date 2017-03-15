@@ -189,6 +189,8 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
                       readbackblock[15] == CRC8(readbackblock,15)) {
                           
                           // So, everything is OK!
+
+                          powerToRTC(RTC_POWER_ON);   // RTC and EEPROM are on the same board, set it a little bit prior to real need of EEPROM so the chip has time to stabilize in it's work.
                           
                           // to reduce the EEPROM write delay, buffer the data
                           byte prepareForEEPROM[8];
@@ -206,7 +208,9 @@ boolean writeDataToLocation(byte location, byte id, long int timestamp) {
                           } 
                           
                           EEPROM.update( EEPROM_ADDRESS_24C32_LOCATION,(short int) locationOnExternalEEPROM);
-                        
+
+                          powerToRTC(RTC_POWER_OFF);   // RTC and EEPROM are on the same board
+                          
                           return true;                 // return 1 as writing was successfull!
                           
                       } else return false;   
@@ -326,7 +330,7 @@ void bleep() {
 
 
 /**
- * function to sleep the system. It does .. nothing currently.
+ * function to sleep the system. It does .. something. But not too much.
  * 
 
  * TODO: Do this!
@@ -334,11 +338,13 @@ void bleep() {
 
 void sleep() {
 #if DEBUG > 1  
+  Serial.flush();
   Serial.print(F("Sleeping"));
 #endif
 
   // this should put the MRFC522 into power-down - it is setting the PowerDown bit in CommandReg register
   mfrc522.PCD_SetRegisterBitMask(mfrc522.CommandReg, 1<<4);
+  
 
   deepSleepCounter++;
 
@@ -349,12 +355,13 @@ void sleep() {
   }
   else {  // in deep sleep power down for 2 seconds (slow reaction to card).
     LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
-    deepSleepCounter = 0x8000;
+    deepSleepCounter = 0x4000;
   }
   // wake up the MRFC522 
  
   // clear the PowerDown bit in CommandReg register
   mfrc522.PCD_ClearRegisterBitMask(mfrc522.CommandReg, 1<<4);
+
 
   // waking up of MRFC522 depends on oscillator, so it needs extra time. MFRC522 library even takes 50ms, which is probably too too long, and then checks
   // this is somewhat faster (we want to be back to sleep as fast as possible).
@@ -389,7 +396,8 @@ boolean writeControl() {
             return false;   // card is not initialized for use in OTICON
          }
 
-
+         powerToRTC(RTC_POWER_ON);    // turn power on for RTC. Set it a little bit prior to real need of RTC so the chip has time to stabilize in it's work.
+         
          location      = readbackblock[1];   // read location of the last written control
          lastWrittenId = readbackblock[5];   // check what was the last written control
 
@@ -411,6 +419,7 @@ boolean writeControl() {
          Serial.println((long int) lastTime); 
         
 #endif
+         powerToRTC(RTC_POWER_OFF);   // turn RTC power off
          
          // check if it's the same control, and if the time between now and the last writing is less than xy seconds (defined in LAST_TIME_FROM_WRITING, by default 30 seconds)
          // if it is, then just bail out. Otherwise, try to write the data to the card.
@@ -458,9 +467,7 @@ boolean writeControl() {
  */
 boolean readOutAllControls() {
         byte location;                      // location on a card where the last data is written. Number cannot be bigger than 255.
-    
- 
-  
+   
        readBlock(4, readbackblock);                        //read block 4 which has all the basic data. This array will be used (and reused) to detect several necessary information 
 
      
@@ -510,6 +517,7 @@ boolean readOutAllControls() {
 
            // will print output if the control on current location (which changes inside the loop) isn't a FINISH control or if it is a finish control but it's the last control in the list
            if ( (readbackblock[locationInBlock] != FINISH_CONTROL_ID || ( readbackblock[locationInBlock] == FINISH_CONTROL_ID && location == startLocation)) || !normalReadout) {
+
               Serial.print( readbackblock[locationInBlock] );  // print the ID of the control
               Serial.print(F(","));
     
@@ -537,6 +545,9 @@ boolean readOutAllControls() {
           // location goes down by 1, the while loop will stop if the variable stillSearching becomes false;
           location--;
         }         
+
+        
+
 
         // if everything was outputted then return to the main loop.
         return !stillSearching;
@@ -637,6 +648,18 @@ boolean clearCard() {
     
 }
 
+
+boolean powerToRTC(byte status) {
+  if (status == RTC_POWER_ON) {
+      digitalWrite(RTC_POWER_PIN, HIGH);  // turn it on
+      delay(1);                           // wait a milisec for chips to get power and stabilize the working before continuing.
+      return true;
+  }
+  // this is else, but .. not using else as defensive programming is not needed here.
+  delay(1);                           // wait a milisec if something is still working inside RTC or EEPROM
+  digitalWrite(RTC_POWER_PIN, LOW);   // turn it off
+  return false;
+}
 
 /**
  * write len bytes to external EEPROM 

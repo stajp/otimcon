@@ -1,4 +1,4 @@
-#define SW_VERSION "0.18"
+#define SW_VERSION "0.19"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
@@ -83,6 +83,21 @@
  *      - fixed a bug with position 0
  *      - fixed a bug when card was removed in a long readout
  *        
+ *        
+ *  - version 0.19 201700311   
+ *      - sleep for low power works - tested with multimeter. 
+ *        * The system based on _regular_ Arduino board, MRFC522 (connected to 3.3V on Arduino board) and RTC module, all powered up constantly - eats up 25mA when sleeping, 55mA when working.
+ *          -> power (5V from powerbank) was connected to 5V pin on Arduino, and current was measured on multimeter
+ *          -> RTC&EEPROM module 5mA, 
+ *          -> MRFC522 takes 10mA when working, 2mA when sleeping. Power LED is still on board, it's probably it, should try desoldering it.   
+ *          -> the rest (aroung 18mA sleeping, 40mA working) is Arduino board - but it has to power USB-serial converter, 3.3V regulator, power LED, and something is lost on the 5V regulator. 
+ *            It's as expected, as Nick Gammon (link below) has similar readings for regular Arduino board. 
+ *          - for testing: Pro mini, Pro mini with power LED desoldered, desoldering power LED on MRFC522
+ *          
+ *      - decided to add option to power the RTC and EEPROM through Arduino pin 5 (setup RTC_POWER_PIN for other). It can still be powered constantly, but it draws 5mA doing nothing, 
+ *        Don't worry about the correct time, there is an RTC backup battery (ideas by https://edwardmallon.wordpress.com/2014/05/21/using-a-cheap-3-ds3231-rtc-at24c32-eeprom-from-ebay/ 
+ *        and https://www.gammon.com.au/forum/?id=11497 
+ *      -        
  *  
 */
 
@@ -108,7 +123,7 @@
 #define USE_PIEZO
 
 // comment this if you want to use serial only if neccessary. If this is uncommented it will always use serial port, even if nothing is connected.
-#define USE_SERIAL_ALWAYS  
+//#define USE_SERIAL_ALWAYS  
                      
 // comment this if you don't need low power work (the system won't go to sleep but serial will always work)
 #define LOW_POWER  
@@ -128,6 +143,11 @@
 #define FEEDBACK_PIEZO      7                 // piezo
 
 #define SERIAL_ACTIVE_PIN   6                // if you want to use serial only when needed, then select a pin (this is D6) and connect it HIGH 
+
+#define RTC_POWER_PIN       5                // power RTC only when needed, from this pin
+#define RTC_POWER_ON        1
+#define RTC_POWER_OFF       0
+
 
 #define LAST_TIME_FROM_WRITING 30             // number of seconds between two consecutive writes if the same card user comes to the station (from now on called control)
 
@@ -160,6 +180,7 @@
 #define CONTROL_WITH_READOUT 2   // works as a control which has a readout of all previouos controls
 #define READOUT 3                // works as a readout only
 #define CLEAR 4                  // works as a clear, and prepares a card for OTIMCON
+#define PRINT 5                  // works as a clear, and prepares a card for OTIMCON
 
 
 
@@ -215,10 +236,14 @@ static CommandHandler sHand3 = CommandHandler(sCmd);  // the sub command handler
  * 
  */
 void setup() {
+      pinMode(RTC_POWER_PIN, OUTPUT); // set pin for output, as RTC and EEPROM will get power from microcontroller
+      powerToRTC(RTC_POWER_ON);
+      
       Serial.begin(SERIAL_BAUD);        // Initialize serial communications with the PC
       SPI.begin();               // Init SPI bus
 
       mfrc522.PCD_Init();        // Init MFRC522 card (in case you wonder what PCD means: proximity coupling device)
+      
      
       Serial.println(F("Starting..."));     
       // if RTC cannot be started, then there is no RTC.
@@ -259,7 +284,9 @@ void setup() {
        pinMode(SERIAL_ACTIVE_PIN, INPUT);
 #endif
 
-
+      powerToRTC(RTC_POWER_OFF);
+      
+        
       
         // Prepare the security key for the read and write functions - all six key bytes are set to 0xFF at chip delivery from the factory.
         // Since the cards in the kit are new and the keys were never defined, they are 0xFF
@@ -342,7 +369,7 @@ void loop()
      // serial will work for about 15 seconds after the card is read (serial work reset the shallowSleepCounter),
      // but other times the system is just sleep <-> RFID
      if (shallowSleepCounter > 0x1FF) {
-        Serial.flush();
+        //Serial.flush();
         sleep();
      } 
      
