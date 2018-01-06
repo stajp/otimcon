@@ -1,15 +1,17 @@
-#define SW_VERSION "0.19"
+#define SW_VERSION "0.2"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
- *  Version: 0.18 
- *  Date: 20170309
+ *  Version: 0.2 
+ *  Date: 20170916
  *  Created by: Stipe Predanic (stipe.predanic (at) gmail.com)
  **************************************************************
  *
  * Required:
  *  HW:
  *  - Arduino based board (tested with Arduino Uno - AtMega328 board, should work on other Arduino systems if they support I2C and SPI)
+ *     - NOTE: from version 0.2 string comparing is done against the PROGMEM, which isn't supported in other Arduino systems!  
+ *             In that cse change the CMP_STRINGS macro.
  *  - MRFC522 module http://playground.arduino.cc/Learning/MFRC522
  *  - RTC clock supported by RTCLib (eg. DS1307, RTC_PCF8523, RTC_DS3231)
  *  - EEPROM (optional - used for backup, comes with DS3231 on popular cheap Chinese modules) 
@@ -84,7 +86,7 @@
  *      - fixed a bug when card was removed in a long readout
  *        
  *        
- *  - version 0.19 201700311   
+ *  - version 0.19 201700311 (wasn't pushed to Github) 
  *      - sleep for low power works - tested with multimeter. 
  *        * The system based on _regular_ Arduino board, MRFC522 (connected to 3.3V on Arduino board) and RTC module, all powered up constantly - eats up 25mA when sleeping, 55mA when working.
  *          -> power (5V from powerbank) was connected to 5V pin on Arduino, and current was measured on multimeter
@@ -97,8 +99,21 @@
  *      - decided to add option to power the RTC and EEPROM through Arduino pin 5 (setup RTC_POWER_PIN for other). It can still be powered constantly, but it draws 5mA doing nothing, 
  *        Don't worry about the correct time, there is an RTC backup battery (ideas by https://edwardmallon.wordpress.com/2014/05/21/using-a-cheap-3-ds3231-rtc-at24c32-eeprom-from-ebay/ 
  *        and https://www.gammon.com.au/forum/?id=11497 
- *      -        
- *  
+ *              
+ *  - version 0.2 20170327
+ *     - changed how READOUT works, it reads from start of the card till the last written location on card (previously looked for START or previuos FINISH and started from there)
+ *     - changed the READOUT output format
+ *     - CONTROL_WITH_READOUT from now on also reads from start of the card (same as READOUT). It takes a lot of time to read the card!
+ *     - added PRINT mode which calculates and prints time from START to FINISH (starts from the last written control and goes towards the beginning looking for START)
+ *     - support for FULL_READOUT which reads the whole card (all 125 locations)
+ *     - increased the serial speed to 38400, should work OK if good crystal is used. Change to 9600 if internal oscillator is used.
+ *     - added a PING command which responds with PONG. Should be used as keepalive messaging. 
+ *     - added the WRITE INFO and WRITE CONTROL options
+ *     - added detection of START and FINISH control numbers in both input and output 
+ *     - added a high power mode for use with auto shut off powerbanks (Chris Gkikas equipment).
+ *     - fixed an anoying turn off bug with wrong time if the board was just turned off, and not reprogrammed.
+ *     - added FROZEN_CONTROL which is a standard control but with a fixed time. This is for setting start time for mass start (Note - any control can be set, not only start)!
+ *     - cleaned the function which does CLEAR
 */
 
 
@@ -111,9 +126,10 @@
 #include "LowPower.h"
 
 
+#define SERIAL_BAUD 38400
 
 // used for debugging purposes. Should be commented out in production or set to 0. Higher number, more information
-#define DEBUG 0
+#define DEBUG 2
 
 
 // comment these if you don't have them, so the code will be smaller
@@ -123,13 +139,14 @@
 #define USE_PIEZO
 
 // comment this if you want to use serial only if neccessary. If this is uncommented it will always use serial port, even if nothing is connected.
-//#define USE_SERIAL_ALWAYS  
+#define USE_SERIAL_ALWAYS  
                      
 // comment this if you don't need low power work (the system won't go to sleep but serial will always work)
-#define LOW_POWER  
+//#define LOW_POWER  
 
-
-
+// uncomment this if you want to use a little more energy - needed when powered from cheep powerbanks which auto shut off.
+// The control will not go to sleep, and will blink a LED on HIGH_POWER_LED (by default pin 4, can be changed)
+#define HIGH_POWER  
 
 
 #define DS3231_I2C_ADDRESS 0x68    // I2C address for DS3231
@@ -144,13 +161,14 @@
 
 #define SERIAL_ACTIVE_PIN   6                // if you want to use serial only when needed, then select a pin (this is D6) and connect it HIGH 
 
-#define RTC_POWER_PIN       5                // power RTC only when needed, from this pin
+#define RTC_POWER_PIN       5                // power RTC only when needed, from this pin. Can be changed
 #define RTC_POWER_ON        1
 #define RTC_POWER_OFF       0
 
-
-#define LAST_TIME_FROM_WRITING 30             // number of seconds between two consecutive writes if the same card user comes to the station (from now on called control)
-
+#define HIGH_POWER_LED      8                // will blink when HIGH_POWER is used, as an additional power usage, when cheap powerbanks with auto shut off are used.
+#define HIGH_POWER_LED_PERCENTAGE 5          // define, in percentage of a block time of around 10 seconds, how long should a LED be turned on. The bigger the number, the longer LED stays on, the bigger is consumption. Cannot be over 100. 
+#define LAST_TIME_FROM_WRITING 30            // number of seconds between two consecutive writes if the same card user comes to the station (from now on called control)
+#define PRINT_END_LINE      4                // used in mode PRINT, number of empty lines after the text "Timing by OTIMCON", used to cut the paper off the POS printer
 
 #define ANALOG_REFERENCE  EXTERNAL
 //#define VOLTAGE_REFERENCE 2                   // used for measuring the voltage, easier to code if 5V is used (error is 2.4%). It will output 512 for 5V.
@@ -167,7 +185,6 @@
 //#define VOLTAGE_REFERENCE 1024. / 110       // used for measuring the voltage, voltage will be as fixed point arithmetic (100 = 1V)  330 = 1.1V
 
 
-#define SERIAL_BAUD 19200
 
 // define ID's for START and FINISH controls. as 1-250 are for controls, available numbers are 253-255 and 0
 #define START_CONTROL_ID 251
@@ -176,20 +193,26 @@
 
 // define the function of the control
 // should convert to enum but I like it this way
-#define CONTROL 1                // works as a standard control with id
-#define CONTROL_WITH_READOUT 2   // works as a control which has a readout of all previouos controls
-#define READOUT 3                // works as a readout only
-#define CLEAR 4                  // works as a clear, and prepares a card for OTIMCON
-#define PRINT 5                  // works as a clear, and prepares a card for OTIMCON
-
+#define CLEAR                1                  // works as a clear, and prepares a card for OTIMCON
+#define CONTROL              2                  // works as a standard control with id
+#define CONTROL_WITH_READOUT 3                  // works as a control which has a readout of all controls in the card
+#define READOUT              4                  // works as a readout only of all controls in the card
+#define FULL_READOUT         5                  // works as a readout only for the whole card
+#define PRINT                6                  // works as a printout, calculates time
+#define WRITER               7                  // works as a specialty writer for additional data into cards, and to write controls if needed
+#define FROZEN_CONTROL       8                  // works as a control with id, but with time frozen 
 
 
 #define EEPROM_ADDRESS_MODE       10  // address in EEPROM for saving mode
-#define EEPROM_ADDRESS_CONTROL_ID 11  // address in EEPROM for saving control ID   
+#define EEPROM_ADDRESS_CONTROL_ID 11  // address in EEPROM for saving control ID  
+
+
+#define EEPROM_ADDRESS_FROZENTIME 12  // address where the frozen time will be saved, if the mode frozen control is used. Note, it will use 4 bytes!
+#define EEPROM_ADDRESS_OPTIONS    16  // different options stored - for POS printers, and time freeze
 
 
 // change this from time to time for wear leveling, as write is done after _every card_
-#define EEPROM_ADDRESS_24C32_LOCATION 16  // location of high part of address in external EEPROM for saving backup of used cards   
+#define EEPROM_ADDRESS_24C32_LOCATION 20  // location of high part of address in external EEPROM for saving backup of used cards   
 
 #define EXTERNAL_EEPROM_SIZE       4096  // maximum number of bytes in external EEPROM 
 
@@ -211,9 +234,17 @@ static byte readbackblock[18];                 //This array is used for reading 
 static long currentTime;                       // currentTime, used for saving the time from RTC (without the need of continuos read in functions).
 
 
-boolean useSerial = true;
-boolean cardPresent = false;
-boolean normalReadout = true;                 // don't do normal readout only if you need to read the whole card (due to problems with START/FINISH stations)
+// I know this is very wasteful, but it's easier for anyone who wants to change the code
+static boolean useSerial = true;
+static boolean cardPresent = false;
+static boolean writerCardPresent = false;
+
+static boolean printEscPos = false;        // used in mode PRINT, use EPSON ECS/POS format or not. Set to true if connected directly to POS printer, false if viewed on a serial monitor
+
+static boolean timeToBleep;                // the boolean which starts the bleeping (LED & PIEZO activation)
+
+static byte writerData[30]={0};
+static byte writerJob;     
 
 byte controlFunction;
 
@@ -224,11 +255,13 @@ static short int locationOnExternalEEPROM = 0;
 
 static unsigned short deepSleepCounter;
 static unsigned short shallowSleepCounter;
+static unsigned short wakePowerBankCounter;
 
 static SerialCommand  sCmd   = SerialCommand();       // The demo SerialCommand object
 static CommandHandler sHand1 = CommandHandler(sCmd);  // the main command handler
 static CommandHandler sHand2 = CommandHandler(sCmd);  // the sub command handler for SET command
 static CommandHandler sHand3 = CommandHandler(sCmd);  // the sub command handler for GET command
+static CommandHandler sHand4 = CommandHandler(sCmd);  // the sub command handler for WRITE command
 
 
 /**
@@ -252,12 +285,12 @@ void setup() {
         while (1);   // sketch halts in an endless loop
       }
 
-      // if RTC is running, check the time. If the time differs more than 15 seconds off the computer clock, then it's set the same as computer clock 
+      // if RTC is running, check the time. If the time in the chip is in the past, then it's set the same as computer clock 
       // warning: it will reset back to uploading time, if there is no backup battery on DS3231
       DateTime now = rtc.now();
       DateTime compiled = DateTime(F(__DATE__), F(__TIME__));
       
-      if (abs(now.unixtime() - compiled.unixtime()) > 15 ) {
+      if (now.unixtime() < compiled.unixtime() ) {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
       }
 
@@ -265,7 +298,14 @@ void setup() {
         controlId = EEPROM.read(EEPROM_ADDRESS_CONTROL_ID);              // set ID of the control station. Any number between 1-250. Beware: it can be anything if new Arduino is used.
          
         controlFunction = EEPROM.read(EEPROM_ADDRESS_MODE);              // set function (mode) of control. Beware: it can be anything if new Arduino is used. 
-        if (controlFunction > CLEAR || controlFunction == 0) controlFunction = READOUT;  // if controlFunction is something crazy (eg. new Arduino), set it to READOUT.
+        if (controlFunction > WRITER || controlFunction == 0) controlFunction = READOUT;  // if controlFunction is something crazy (eg. new Arduino), set it to READOUT.
+
+        printEscPos =  ((EEPROM.read(EEPROM_ADDRESS_OPTIONS) & 0x1) > 0) ? true : false;  // set the Epson POS standard or not in PRINT mode
+        if (controlFunction == FROZEN_CONTROL) {
+            currentTime = EEPROM.get(EEPROM_ADDRESS_FROZENTIME, currentTime);  // sets the time for usage if frozen control is used
+        }
+        writerJob = 0; 
+           
 
 #ifdef USE_EEPROM_BACKUP        
        EEPROM.get(EEPROM_ADDRESS_24C32_LOCATION, locationOnExternalEEPROM);
@@ -313,6 +353,8 @@ void setup() {
   // Setup callbacks for the main SerialCommand. These are the main commands
   sHand1.addHandler("SET",    sHand2);          // Handler for everything starting with SET
   sHand1.addHandler("GET",    sHand3);          // Handler for everything starting with GET
+  sHand1.addHandler("WRITE",  sHand4);          // Handler for everything starting with WRITE
+  sHand1.addCommand("PING",   s_pong);          // Handler for PING keepalive messages
   sHand1.addCommand("?",      s_help);            // Handler for help 
   sHand1.setDefault(          s_unrecognized);    // Handler for command that isn't matched  (says "What?")
 
@@ -332,25 +374,43 @@ void setup() {
   sHand3.addCommand("BACKUP",  s_getBackup);     // Get current memory backup in external EEPROM
   sHand3.setDefault(         s_unrecognized);    // Handler for command that isn't matched  (says "What?")
 
+  sHand4.addCommand("INFO",  s_writeInfo);         // Write info1 on the card
+  sHand4.addCommand("CONTROL",  s_writeControl);     // Writes arbritary control to the next position
+ 
 
 
 
 
 #if DEBUG > 0
-  Serial.println("Setup finished!");
+  Serial.println(F("Setup finished!"));
 #endif  
-  Serial.print(">");
+  Serial.print(F(">"));
 
   shallowSleepCounter = 0;
   deepSleepCounter = 0;
+  wakePowerBankCounter = 0;
 }
 
 
 void loop()
 {
- 
-        static boolean timeToBleep;                // the boolean which starts the bleeping (LED & PIEZO activation)
-        
+
+#ifdef HIGH_POWER
+      if (!timeToBleep) {
+         wakePowerBankCounter++;
+
+         // set this number to define how long the LED should blink.
+         if (wakePowerBankCounter < HIGH_POWER_LED_PERCENTAGE)  {
+            digitalWrite(HIGH_POWER_LED, HIGH);   
+         }
+         else if (wakePowerBankCounter > 100) {
+                 wakePowerBankCounter = 0; 
+              }
+              else {
+                 digitalWrite(HIGH_POWER_LED, LOW); 
+              }
+        } 
+#endif          
 
       
         
@@ -388,6 +448,8 @@ void loop()
      
    
         /*****************************************establishing contact with a tag/card**********************************************************************/
+// mfrc522.PCD_StopCrypto1();
+// delay(1);
         
   	// Look for new cards (in case you wonder what PICC means: proximity integrated circuit card)
 	if ( ! mfrc522.PICC_IsNewCardPresent()) {     //if PICC_IsNewCardPresent returns 1, a new card has been found and we continue
@@ -410,17 +472,20 @@ void loop()
 #endif
 // END DEBUG CODE
 
-   
+    
     // at the end of this code cardPresent is set to true. If there is no card on the reader, then it's set to false.
     // 
-    // So, it will do something only if the card was removed and then new or the same card is presented again.
-    // It will bleep the same (or not to bleep if there is an error) until card is removed
-    if ( ! cardPresent) {       
+    // Why is that done? If you hold a card for long time, it will constantly try to read it, and then try to write it or whatever.
+    // This way a user _must_ remove the card (cardPresent becomes false) before the same or some other card can be presented! 
+    // It will bleep the same (or not to bleep if there is an error) until card is removed.
+    // This is _not_ used if the WRITER mode is in effect, as it expects card to be always present
+    if ( ! cardPresent ) { 
+      timeToBleep = false;      
       // controlId 1-252 are controls.
       // 1-250 regular controls, 251 is start, 252 is finish
       // work as control should be set up in controlSetup
-      if ( controlFunction == CONTROL || controlFunction == CONTROL_WITH_READOUT ) {
-          timeToBleep = writeControl();
+      if ( controlFunction == CONTROL || controlFunction == CONTROL_WITH_READOUT  || controlFunction == FROZEN_CONTROL) {
+          timeToBleep = writeCurrentControl();
           if ( timeToBleep && useSerial ) {
                 Serial.print(F("^"));
                 Serial.print(controlId);
@@ -434,21 +499,28 @@ void loop()
                 
 
                 if (controlFunction == CONTROL_WITH_READOUT) {
-                   readOutAllControls();
+                   readOutControls();
                    Serial.println(F("%"));
                 }
                 Serial.println(F(">"));
             }
       }
-      if ( controlFunction == READOUT ) {
+      if ( controlFunction == READOUT || controlFunction == FULL_READOUT ) {
         if (  useSerial ) {
           Serial.print(F("Card:"));
           serialPrintUid();
           Serial.println("");
-          timeToBleep = readOutAllControls();
-          Serial.println(F("%"));
+          timeToBleep = readOutControls();
+          if (timeToBleep) {
+            Serial.println(F("%"));
+          }
           Serial.println(F(">"));
           
+        }
+      }
+      if ( controlFunction == PRINT ) {
+        if (  useSerial ) {
+          timeToBleep = printControls();
         }
       }
 
@@ -462,14 +534,24 @@ void loop()
               Serial.println(F(">"));
            }
       }
-     
-
+      if ( controlFunction == WRITER) {
+        Serial.println(F("WRITER job"));
+        Serial.println(writerJob);
+        
+        if (writerJob != 0) {
+            timeToBleep = writerWriteData();
+        }
+      }
     }
       
       // for some reason, my hardware doesn't work without reinitialization.
-      // usually there should be some delay between new use (they say 100ms is enough), so do it prior to bleep which is at least 200ms
-      mfrc522.PCD_Init();     
-
+      // usually there should be some delay between new use (they say 100ms is enough), so do it prior to bleep which is longer
+    //  if ((controlFunction != WRITER)) 
+   //      mfrc522.PCD_Init();
+          mfrc522.PCD_StopCrypto1();
+          delay(1);
+        
+    
      // mark the card as not present before checking the bleep!
      cardPresent = false;
      
