@@ -920,10 +920,9 @@ boolean clearCard() {
 }
 
 boolean writerWriteData(){
-  Serial.print(F("WRITER job: "));
-  Serial.println(writerJob);
-  
+  // write info block (names, start number etc)
   if (writerJob == 1) {
+    Serial.print(F("WRITING INFO TO CARD: "));
      // do the write info 
     for (int i = 0; i < 2; i++) {
       for (int j = 0; j < 15; j++) {
@@ -940,42 +939,45 @@ boolean writerWriteData(){
         delay(10);
 #endif        
        
-      }
-      writerJob = 0;
-      for (int i = 0; i < 30; i++) {
-        writerData[i] = 0;
-      }
-      return true;
+    }
+    writerJob = 0;
+    for (int i = 0; i < 30; i++) {
+      writerData[i] = 0;
+    }
+    return true;
   }
+  // write additional control
   else if (writerJob == 2) {
-      byte controlToSet = writerData[0];
-      long int controlTime = writerData[1];
-      controlTime = (controlTime << 8) | (writerData[2]);
-      controlTime = (controlTime << 8) | (writerData[3]);
-      controlTime = (controlTime << 8) | (writerData[4]);
+    Serial.print(F("WRITING CONTROL TO CARD: "));
+    byte controlToSet = writerData[0];
+    long int controlTime = writerData[1];
+    controlTime = (controlTime << 8) | (writerData[2]);
+    controlTime = (controlTime << 8) | (writerData[3]);
+    controlTime = (controlTime << 8) | (writerData[4]);
       
 #if DEBUG > 1
-      Serial.print(F("controlTime:"));
-      Serial.println(controlTime);
-      Serial.print(F("writerData1:"));
-      Serial.println(writerData[1]);
-      Serial.print(F("writerData2:"));
-      Serial.println(writerData[2]);
-      Serial.print(F("writerData3:"));
-      Serial.println(writerData[3]);
-      Serial.print(F("writerData4:"));
-      Serial.println(writerData[4]);
+    Serial.print(F("controlTime:"));
+    Serial.println(controlTime);
+    Serial.print(F("writerData1:"));
+    Serial.println(writerData[1]);
+    Serial.print(F("writerData2:"));
+    Serial.println(writerData[2]);
+    Serial.print(F("writerData3:"));
+    Serial.println(writerData[3]);
+    Serial.print(F("writerData4:"));
+    Serial.println(writerData[4]);
  
 #endif
-      if ( writeControl(controlToSet, controlTime, 0xFF) == true) {
-        for (int i = 0; i < 5; i++) {
-          writerData[i] = 0;
-        } 
-        writerJob = 0;
-        return true;
-      }
-      return false;
+    if ( writeControl(controlToSet, controlTime, 0xFF) == true) {
+      for (int i = 0; i < 5; i++) {
+        writerData[i] = 0;
+      } 
+      writerJob = 0;
+      return true;
+    }
+    return false;
   }
+  return false;
 }
 
 /**

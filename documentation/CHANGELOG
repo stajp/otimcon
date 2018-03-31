@@ -1,0 +1,81 @@
+History:
+ * - version 0.1 20160601
+ *      First version is based on
+ *      - ideas about OPORCON ( my project based on 1-wire iButtons and using PIC16F628, available at http://stipe.predanic.com/?Projekti/OPORCON )
+ *      - MFRC example by Rudy Schlaf for www.makecourse.com http://makecourse.weebly.com/week10segment1.html  -> READ IT, WATCH THE VIDEO!!!!!!
+ *     Rudely hacked to prove that it works.
+ *
+ * - version 0.11 20160605
+ *      - cleaned up the functions needed for this to work
+ *
+ * - version 0.12 20160816
+ *      - further cleaning, added read back to check if everything is written as it should, added the bleep and basic sleep
+ *      - a lot of ifdef preprocessing added, to make everything clean
+ *
+ * - version 0.13 20160816
+ *      - added support for readout and clear (NOT TESTED YET!)
+ *
+ * - version 0.14 20160816
+ *      - added support for serial CLI for setting and getting data
+ *      - support for different modes and control ID's done through CLI
+ *      - changed name from OTICON to OTIMCON for search engines
+ *
+ * - version 0.15 20160817
+ *      - CLI tested
+ *      - added the AD conversion for battery measurement (not tested)
+ *      - modes and control saved into ATMega328 EEPROM
+ *
+ * - version 0.16 201619
+ *      - make backup of card UID and time to EEPROM on Ebay DS3231 boards
+ *
+ * - version 0.17 201619
+ *      - sleep for low power work -> done it poorly, should revisit one day
+ *         -> done only for microcontroller, RFID and RTC should also go to sleep
+ *         -> low power now puts the microcontroller to sleep for 125ms, wakes up, checks the RFID and goes back to sleep.
+ *            after reading a card the system doesn't go to any kind of sleep for half a minute(!!!) and serial works as expected (also the reading of the cards is quicker!)
+ *            --> if serial is used, that resets the counter for another minute.
+ *         -> if low power is not used (comment out a define), then serial always works as expected.
+ *         -> by default LOW POWER is NOT USED!
+ *
+ *  - version 0.18 201700306
+ *      - sleep for low power works doesn't block the system, but it's not tested with multimeter.
+ *      - Low power is now DEFAULT.
+ *      - changed the identifier of a card ready for OTIMCON from "1" to custom number defined in  OTIMCON_CARD_TYPE
+ *      - changed the sound and led signalling. Now it works better.
+ *      - added mode CRAZY_READOUT. It will read the whole RFID card, ignoring the START and FINISH controls.
+ *      - fixed a bug with position 0
+ *      - fixed a bug when card was removed in a long readout
+ *
+ *
+ *  - version 0.19 201700311 (wasn't pushed to Github)
+ *      - sleep for low power works - tested with multimeter.
+ *        * The system based on _regular_ Arduino board, MRFC522 (connected to 3.3V on Arduino board) and RTC module, all powered up constantly - eats up 25mA when sleeping, 55mA when working.
+ *          -> power (5V from powerbank) was connected to 5V pin on Arduino, and current was measured on multimeter
+ *          -> RTC&EEPROM module 5mA,
+ *          -> MRFC522 takes 10mA when working, 2mA when sleeping. Power LED is still on board, it's probably it, should try desoldering it.
+ *          -> the rest (aroung 18mA sleeping, 40mA working) is Arduino board - but it has to power USB-serial converter, 3.3V regulator, power LED, and something is lost on the 5V regulator.
+ *            It's as expected, as Nick Gammon (link below) has similar readings for regular Arduino board.
+ *          - for testing: Pro mini, Pro mini with power LED desoldered, desoldering power LED on MRFC522
+ *
+ *      - decided to add option to power the RTC and EEPROM through Arduino pin 5 (setup RTC_POWER_PIN for other). It can still be powered constantly, but it draws 5mA doing nothing,
+ *        Don't worry about the correct time, there is an RTC backup battery (ideas by https://edwardmallon.wordpress.com/2014/05/21/using-a-cheap-3-ds3231-rtc-at24c32-eeprom-from-ebay/
+ *        and https://www.gammon.com.au/forum/?id=11497
+ *
+ *  - version 0.2 20170327
+ *     - changed how READOUT works, it reads from start of the card till the last written location on card (previously looked for START or previuos FINISH and started from there)
+ *     - changed the READOUT output format
+ *     - CONTROL_WITH_READOUT from now on also reads from start of the card (same as READOUT). It takes a lot of time to read the card!
+ *     - added PRINT mode which calculates and prints time from START to FINISH (starts from the last written control and goes towards the beginning looking for START)
+ *     - support for FULL_READOUT which reads the whole card (all 125 locations)
+ *     - increased the serial speed to 38400, should work OK if good crystal is used. Change to 9600 if internal oscillator is used.
+ *     - added a PING command which responds with PONG. Should be used as keepalive messaging.
+ *     - added the WRITE INFO and WRITE CONTROL options
+ *     - added detection of START and FINISH control numbers in both input and output
+ *     - added a high power mode for use with auto shut off powerbanks (Chris Gkikas equipment).
+ *     - fixed an anoying turn off bug with wrong time if the board was just turned off, and not reprogrammed.
+ *     - added FROZEN_CONTROL which is a standard control but with a fixed time. This is for setting start time for mass start (Note - any control can be set, not only start)!
+ *     - cleaned the function which does CLEAR
+ *
+ * - version 0.21 20180331
+ *     - fixed detection of card which isn't removed after the beep, to stop multiple prints, reads and writes.
+ *     - changed organization of files 
