@@ -78,4 +78,9 @@ History:
  *
  * - version 0.21 20180331
  *     - fixed detection of card which isn't removed after the beep, to stop multiple prints, reads and writes.
- *     - changed organization of files 
+ *     - changed organization of files
+ *
+ * - version 0.22 20180402
+ *     - fixed organization of files
+ *     - added bleep as command (not documented in help)
+ *     - Python 2.7 command line scripts for easier work with OTIMCON and for printing tickets

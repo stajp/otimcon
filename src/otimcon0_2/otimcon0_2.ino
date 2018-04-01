@@ -1,4 +1,4 @@
-#define SW_VERSION "0.21"
+#define SW_VERSION "0.22"
 /*
  *************************************************************
  *  Project: Open Timing Control (OTIMCON)
@@ -53,7 +53,7 @@
 #include "LowPower.h"
 
 
-#define SERIAL_BAUD 9600
+#define SERIAL_BAUD 38400
 
 // used for debugging purposes. Should be commented out in production or set to 0. Higher number, more information
 #define DEBUG 0
@@ -282,6 +282,7 @@ void setup() {
   sHand1.addHandler("GET",    sHand3);          // Handler for everything starting with GET
   sHand1.addHandler("WRITE",  sHand4);          // Handler for everything starting with WRITE
   sHand1.addCommand("PING",   s_pong);          // Handler for PING keepalive messages
+  sHand1.addCommand("BLEEP",   bleep);           // Handler for BLEEP
   sHand1.addCommand("?",      s_help);            // Handler for help 
   sHand1.setDefault(          s_unrecognized);    // Handler for command that isn't matched  (says "What?")
 

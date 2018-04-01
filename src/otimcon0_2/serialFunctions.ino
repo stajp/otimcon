@@ -301,8 +301,8 @@ void s_getVoltage() {
   ADCSRA =  bit (ADEN);
 
   analogReference (ANALOG_REFERENCE);
-
-  Serial.println(F("Voltage:"));
+  Serial.println();
+  Serial.print(F("Voltage:"));
   uint16_t sum;
 
   //take 8 samples, so we can easily divide the voltage
@@ -326,7 +326,7 @@ void s_getVoltage() {
 */
 void s_getVersion() {
   Serial.println();
-  Serial.println(F("Version:"));
+  Serial.print(F("Version:"));
   Serial.println(F(SW_VERSION));
   printCursor();
 }
